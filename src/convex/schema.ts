@@ -132,7 +132,7 @@ const schema = defineSchema(
           ),
         }),
       ),
-    }).index("by_relation", ["relationId"], ["timestamp"]),
+    }).index("by_relation", ["relationId", "timestamp"]),
   },
   {
     schemaValidation: false,
