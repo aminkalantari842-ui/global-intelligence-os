@@ -135,7 +135,9 @@ export default function Landing() {
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm" className="h-9 px-4">
-              <a href="#method" className="text-xs">How confidence is built</a>
+              <a href="#method" className="text-xs">
+                How confidence is built
+              </a>
             </Button>
           </div>
         </motion.div>
