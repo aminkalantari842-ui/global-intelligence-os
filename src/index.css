@@ -119,6 +119,13 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* RTL support */
+  [dir="rtl"] {
+    text-align: right;
+  }
+  [dir="rtl"] .flex-row {
+    direction: rtl;
+  }
   button:not([disabled]),
   [role="button"]:not([disabled]) {
     cursor: pointer;

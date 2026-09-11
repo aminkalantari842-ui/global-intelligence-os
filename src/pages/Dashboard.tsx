@@ -2,8 +2,9 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useAuth } from "@/hooks/use-auth";
+import { useI18n } from "@/i18n/context";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -324,6 +325,7 @@ function ActorPanel({
 
 export default function Dashboard() {
   const { user, signOut } = useAuth();
+  const { t, lang } = useI18n();
   const navigate = useNavigate();
 
   const graph = useQuery(api.graph.getGraph);
@@ -404,7 +406,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
+    <div className="flex h-screen flex-col bg-background text-foreground" dir={lang === "fa" ? "rtl" : "ltr">
       {/* Top bar */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
         <div className="flex items-center gap-3">
@@ -415,10 +417,10 @@ export default function Dashboard() {
             <span className="flex size-6 items-center justify-center rounded-md bg-foreground text-[10px] font-bold text-background">
               GI
             </span>
-            Global Intelligence OS
+            {t("app.name")}
           </button>
           <span className="hidden text-xs text-muted-foreground sm:inline">
-            / Actor Relationship Graph
+            / {t("nav.graph")}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -427,7 +429,7 @@ export default function Dashboard() {
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search actors, aliases, ties…"
+              placeholder={t("dash.search")}
               className="h-9 w-64 rounded-md border border-border bg-card pl-8 pr-3 text-xs outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground/40"
             />
           </div>
@@ -435,8 +437,7 @@ export default function Dashboard() {
             {user?.email}
           </span>
           <Button variant="outline" size="sm" onClick={handleSignOut} className="gap-1.5">
-            <LogOut className="size-3.5" />
-            Sign out
+            <LogOut className="size-3.5" /> {t("btn.signout")}
           </Button>
         </div>
       </header>
@@ -445,7 +446,7 @@ export default function Dashboard() {
         {/* Left rail — filters */}
         <aside className="hidden w-56 shrink-0 flex-col border-r border-border px-4 py-4 lg:flex">
           <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-            Relation types
+            {t("dash.relationTypes")}
           </p>
           <div className="mt-2 flex flex-col gap-0.5">
             {allKinds.map((k) => {
@@ -478,11 +479,11 @@ export default function Dashboard() {
           <Separator className="my-4" />
 
           <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-            Registry status
+            {t("dash.registryStatus")}
           </p>
           <div className="mt-2 space-y-1.5 text-xs text-muted-foreground">
             <div className="flex items-center gap-2">
-              <span className="size-1.5 rounded-full bg-foreground" /> Registry live
+              <span className="size-1.5 rounded-full bg-foreground" /> {t("dash.registryLive")}
             </div>
             <p className="text-[11px] leading-4">
               {stats
@@ -502,7 +503,7 @@ export default function Dashboard() {
                 graphRef.current?.__reset?.();
               }}
             >
-              <RotateCcw className="size-3.5" /> Reset view
+              <RotateCcw className="size-3.5" /> {t("btn.reset")}
             </Button>
           </div>
         </aside>
@@ -535,7 +536,7 @@ export default function Dashboard() {
                 size="icon"
                 className="size-8"
                 onClick={() => graphRef.current?.__zoomBy?.(0.83)}
-                aria-label="Zoom out"
+                aria-label={t("dash.zoomOut")}
               >
                 <Minus className="size-4" />
               </Button>
@@ -547,7 +548,7 @@ export default function Dashboard() {
                 onClick={() => setFocusMode((f) => !f)}
               >
                 <Layers className="size-3.5" />
-                Focus
+                {t("dash.focus")}
               </Button>
             </div>
           </div>
@@ -557,15 +558,14 @@ export default function Dashboard() {
               <div className="flex h-full items-center justify-center rounded-md border border-border/60 bg-muted/30">
                 <div className="text-center">
                   <div className="mx-auto size-6 animate-spin rounded-full border border-border border-t-foreground/60" />
-                  <p className="mt-3 text-xs text-muted-foreground">Loading registry…</p>
+                  <p className="mt-3 text-xs text-muted-foreground">{t("dash.loading")}</p>
                 </div>
               </div>
             ) : graph.actors.length === 0 ? (
               <div className="flex h-full items-center justify-center rounded-md border border-border/60 bg-muted/30">
-                <div className="text-center">
-                  <p className="text-sm font-medium">Registry empty</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Seeding canonical dataset…
+                <div className="text-center">                  <p className="text-sm font-medium">{t("dash.empty")}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {t("dash.seeding")}
                   </p>
                 </div>
               </div>
@@ -589,8 +589,7 @@ export default function Dashboard() {
           </div>
 
           {/* Bottom ticker — latest observed updates */}
-          <footer className="hidden h-9 shrink-0 items-center gap-6 overflow-hidden border-t border-border px-4 text-[11px] text-muted-foreground md:flex">
-            <span className="uppercase tracking-[0.14em]">Latest evidence</span>
+          <footer className="hidden h-9 shrink-0 items-center gap-6 overflow-hidden border-t border-border px-4 text-[11px] text-muted-foreground md:flex">              <span className="uppercase tracking-[0.14em]">{t("dash.latestEvidence")}</span>
             {(graph?.relations ?? [])
               .slice()
               .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -635,13 +634,12 @@ export default function Dashboard() {
           ) : (
             <div className="flex h-full flex-col px-4 py-4">
               <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                Inspector
+                {t("dash.inspector")}
               </p>
               <div className="mt-3 rounded-md border border-dashed border-border px-4 py-6 text-center">
-                <p className="text-xs font-medium">Nothing selected</p>
+                <p className="text-xs font-medium">{t("dash.nothingSelected")}</p>
                 <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-                  Click an actor for its profile, or an edge for the evidence trail behind
-                  the relationship.
+                  {t("dash.clickHint")}
                 </p>
               </div>
 

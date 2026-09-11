@@ -95,6 +95,35 @@ const schema = defineSchema(
       .index("by_pair", ["sourceSlug", "targetSlug"])
       .index("by_status", ["status"]),
 
+    // ─── Think Tank Registry ───────────────────────────────────────────────
+    thinkTanks: defineTable({
+      name: v.string(),
+      slug: v.string(),
+      country: v.string(),
+      region: v.string(),
+      feedUrl: v.string(),
+      feedType: v.union(v.literal("RSS"), v.literal("ATOM")),
+      enabled: v.boolean(),
+      lastFetched: v.optional(v.number()),
+      description: v.string(),
+    })
+      .index("by_slug", ["slug"])
+      .index("by_enabled", ["enabled"]),
+
+    // ─── Publications (from Think Tank RSS feeds) ──────────────────────────
+    publications: defineTable({
+      thinkTankSlug: v.string(),
+      title: v.string(),
+      url: v.string(),
+      summary: v.string(),
+      publishedAt: v.number(),
+      topics: v.array(v.string()),
+      fetchedAt: v.number(),
+    })
+      .index("by_thinktank", ["thinkTankSlug"])
+      .index("by_published", ["publishedAt"])
+      .index("by_url", ["url"]),
+
     // ─── Relation Evidence ─────────────────────────────────────────────────
     // Timeline events attached to a relationship. Every event carries typed
     // sources with a stance so any claim can be traced to origin.
