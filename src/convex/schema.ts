@@ -96,19 +96,25 @@ const schema = defineSchema(
       .index("by_status", ["status"]),
 
     // ─── Think Tank Registry ───────────────────────────────────────────────
+    // tier = analytical influence class (S / A+ / A / B+) — internal rating, not official rank.
+    // clusters = topic clusters the tank belongs to (security, foreign-policy, iran-mideast, ...)
     thinkTanks: defineTable({
       name: v.string(),
       slug: v.string(),
       country: v.string(),
       region: v.string(),
+      website: v.optional(v.string()),
       feedUrl: v.string(),
       feedType: v.union(v.literal("RSS"), v.literal("ATOM")),
       enabled: v.boolean(),
+      tier: v.optional(v.string()), // "S" | "A+" | "A" | "B+"
+      clusters: v.optional(v.array(v.string())),
       lastFetched: v.optional(v.number()),
       description: v.string(),
     })
       .index("by_slug", ["slug"])
-      .index("by_enabled", ["enabled"]),
+      .index("by_enabled", ["enabled"])
+      .index("by_tier", ["tier"]),
 
     // ─── Publications (from Think Tank RSS feeds) ──────────────────────────
     publications: defineTable({

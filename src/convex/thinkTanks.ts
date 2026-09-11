@@ -63,37 +63,50 @@ export const listPublications = query({
   },
 });
 
-/** Get publication counts per tank for the sidebar. */
+/** Get publication counts + metadata per tank for the sidebar (single pass). */
 export const getTankStats = query({
   args: {},
   handler: async (ctx) => {
     const tanks = await ctx.db.query("thinkTanks").withIndex("by_enabled", (q) => q.eq("enabled", true)).collect();
-    const stats: Record<string, { count: number; lastPublished: number | null; name: string; slug: string; country: string; region: string; description: string; lastFetched: number | null }> = {};
 
+    type Stat = {
+      count: number;
+      lastPublished: number | null;
+      name: string;
+      slug: string;
+      country: string;
+      region: string;
+      website: string | undefined;
+      tier: string | undefined;
+      clusters: string[] | undefined;
+      description: string;
+      lastFetched: number | null;
+    };
+    const stats: Record<string, Stat> = {};
     for (const tank of tanks) {
-      const pubs = await ctx.db
-        .query("publications")
-        .withIndex("by_thinktank", (q) => q.eq("thinkTankSlug", tank.slug))
-        .order("desc")
-        .take(1);
-
       stats[tank.slug] = {
-        count: 0, // will be filled below
-        lastPublished: pubs.length > 0 ? pubs[0].publishedAt : null,
+        count: 0,
+        lastPublished: null,
         name: tank.name,
         slug: tank.slug,
         country: tank.country,
         region: tank.region,
+        website: tank.website,
+        tier: tank.tier,
+        clusters: tank.clusters,
         description: tank.description,
         lastFetched: tank.lastFetched ?? null,
       };
     }
 
-    // Count publications per tank
+    // Single pass over publications: count + latest date per tank.
     const allPubs = await ctx.db.query("publications").collect();
     for (const pub of allPubs) {
-      if (stats[pub.thinkTankSlug]) {
-        stats[pub.thinkTankSlug].count++;
+      const s = stats[pub.thinkTankSlug];
+      if (!s) continue;
+      s.count++;
+      if (s.lastPublished === null || pub.publishedAt > s.lastPublished) {
+        s.lastPublished = pub.publishedAt;
       }
     }
 

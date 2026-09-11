@@ -1,13 +1,12 @@
-import { useAction, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useI18n } from "@/i18n/context";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import {
-  ArrowLeft,
   ExternalLink,
   RefreshCw,
   BookOpen,
@@ -19,22 +18,60 @@ import {
   Clock,
   TrendingUp,
   Filter,
+  Layers,
+  Star,
 } from "lucide-react";
 
 const REGION_MAP: Record<string, string> = {
   "North America": "tt.northAmerica",
   Europe: "tt.europe",
   "Middle East": "tt.middleEast",
+  Asia: "tt.asia",
+  Africa: "tt.africa",
+  Oceania: "tt.oceania",
+  "Latin America": "tt.latinAmerica",
 };
 
 const REGION_COLORS: Record<string, string> = {
   "North America": "bg-blue-500/10 text-blue-600 dark:text-blue-400",
   Europe: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
   "Middle East": "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+  Asia: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+  Africa: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+  Oceania: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
+  "Latin America": "bg-lime-500/10 text-lime-600 dark:text-lime-400",
 };
 
-function fmtDate(ts: number) {
-  return new Date(ts).toLocaleDateString("fa-IR", {
+const TIER_MAP: Record<string, string> = {
+  S: "tt.tierS",
+  "A+": "tt.tierAPlus",
+  A: "tt.tierA",
+  "B+": "tt.tierBPlus",
+};
+
+const TIER_COLORS: Record<string, string> = {
+  S: "bg-foreground text-background",
+  "A+": "bg-foreground/80 text-background",
+  A: "border border-border text-foreground",
+  "B+": "border border-border text-muted-foreground",
+};
+
+const TIER_ORDER: Record<string, number> = { S: 0, "A+": 1, A: 2, "B+": 3 };
+
+const CLUSTERS = [
+  "security",
+  "foreign-policy",
+  "iran-mideast",
+  "china-asia",
+  "economy",
+  "energy",
+  "africa-global-south",
+  "tech",
+  "governance",
+] as const;
+
+function fmtDate(ts: number, fa: boolean) {
+  return new Date(ts).toLocaleDateString(fa ? "fa-IR" : "en-GB", {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -57,8 +94,27 @@ export default function ThinkTanks() {
   const [selectedTank, setSelectedTank] = useState<string | undefined>();
   const [search, setSearch] = useState("");
   const [regionFilter, setRegionFilter] = useState<string | undefined>();
+  const [tierFilter, setTierFilter] = useState<string | undefined>();
+  const [clusterFilter, setClusterFilter] = useState<string | undefined>();
   const [refreshing, setRefreshing] = useState(false);
-  const [refreshResult, setRefreshResult] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+
+  const syncRegistry = useMutation(api.thinkTankSeed.syncRegistry);
+
+  // Ensure the full 114-tank registry is present (idempotent; runs once).
+  useEffect(() => {
+    setSyncing(true);
+    syncRegistry()
+      .then((r) => {
+        if (r.inserted > 0) {
+          setStatusMsg(`${t("tt.registriesSynced")} · +${r.inserted}`);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setSyncing(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const tanks = useQuery(api.thinkTanks.listEnabled);
   const stats = useQuery(api.thinkTanks.getStats);
@@ -73,43 +129,40 @@ export default function ThinkTanks() {
 
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
-    setRefreshResult(null);
+    setStatusMsg(null);
     try {
       const result = await refreshFeeds();
-      setRefreshResult(
-        `${result.refreshed}/${result.total} ${t("tt.feedActive")}`,
+      setStatusMsg(
+        `${result.refreshed}/${result.total} ${t("tt.feedActive")} · +${result.inserted}`,
       );
     } catch (err) {
-      setRefreshResult(err instanceof Error ? err.message : "Error");
+      setStatusMsg(err instanceof Error ? err.message : "Error");
     } finally {
       setRefreshing(false);
     }
   }, [refreshFeeds, t]);
 
-  // Group tanks by region
-  const tanksByRegion = useMemo(() => {
-    if (!tanks) return {};
-    const grouped: Record<string, typeof tanks> = {};
-    for (const tank of tanks) {
-      const region = tank.region || "Other";
-      if (!grouped[region]) grouped[region] = [];
-      grouped[region].push(tank);
-    }
-    return grouped;
-  }, [tanks]);
-
-  // Filtered regions for sidebar
   const regions = useMemo(() => {
     if (!tanks) return [];
-    const set = new Set(tanks.map((t) => t.region));
+    const set = new Set(tanks.map((tank) => tank.region));
     return Array.from(set).sort();
   }, [tanks]);
 
   const displayTanks = useMemo(() => {
     if (!tanks) return [];
-    if (!regionFilter) return tanks;
-    return tanks.filter((t) => t.region === regionFilter);
-  }, [tanks, regionFilter]);
+    let list = tanks;
+    if (regionFilter) list = list.filter((tank) => tank.region === regionFilter);
+    if (tierFilter) list = list.filter((tank) => tank.tier === tierFilter);
+    if (clusterFilter)
+      list = list.filter((tank) => (tank.clusters ?? []).includes(clusterFilter));
+    // Sort by tier (S first), then name
+    return [...list].sort((a, b) => {
+      const ta = TIER_ORDER[a.tier ?? "B+"] ?? 4;
+      const tb = TIER_ORDER[b.tier ?? "B+"] ?? 4;
+      if (ta !== tb) return ta - tb;
+      return a.name.localeCompare(b.name);
+    });
+  }, [tanks, regionFilter, tierFilter, clusterFilter]);
 
   return (
     <div
@@ -148,45 +201,47 @@ export default function ThinkTanks() {
       </header>
 
       <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
-        {/* Page header + stats */}
+        {/* Page header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">
               {t("tt.title")}
             </h1>
-            <p className="mt-1 text-sm text-muted-foreground">
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
               {t("tt.desc")}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-1.5 text-xs"
-              onClick={handleRefresh}
-              disabled={refreshing}
-            >
-              {refreshing ? (
-                <Loader2 className="size-3.5 animate-spin" />
-              ) : (
-                <RefreshCw className="size-3.5" />
-              )}
-              {t("tt.refreshAll")}
-            </Button>
-          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0 gap-1.5 text-xs"
+            onClick={handleRefresh}
+            disabled={refreshing || syncing}
+          >
+            {refreshing ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            {t("tt.refreshAll")}
+          </Button>
         </div>
 
-        {/* Refresh status */}
-        {refreshResult && (
+        {/* Status message */}
+        {(statusMsg || syncing) && (
           <div className="mt-2 flex items-center gap-2 rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
-            <Clock className="size-3" />
-            {refreshResult}
+            {syncing ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <Clock className="size-3" />
+            )}
+            {syncing ? t("tt.syncRegistry") : statusMsg}
           </div>
         )}
 
         {/* Stats strip */}
         {stats && (
-          <div className="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             <div className="rounded-lg border border-border bg-card p-3">
               <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
                 {t("tt.institutions")}
@@ -221,7 +276,7 @@ export default function ThinkTanks() {
             </div>
             <div className="rounded-lg border border-border bg-card p-3">
               <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                {t("tt.topics")}
+                {t("tt.topTopics")}
               </p>
               <p className="mt-1 text-xl font-semibold tabular-nums">
                 {stats.topicCount}
@@ -233,7 +288,7 @@ export default function ThinkTanks() {
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {stats.lastRefresh > 0
-                  ? fmtRelative(stats.lastRefresh) + " ago"
+                  ? `${fmtRelative(stats.lastRefresh)} ${t("tt.never") === "هرگز" ? "" : "ago"}`
                   : t("tt.never")}
               </p>
             </div>
@@ -251,10 +306,86 @@ export default function ThinkTanks() {
           />
         </div>
 
-        {/* Main layout: sidebar + publications */}
-        <div className="mt-4 grid gap-6 lg:grid-cols-[260px_1fr]">
+        {/* Main layout */}
+        <div className="mt-4 grid gap-6 lg:grid-cols-[280px_1fr]">
           {/* Sidebar */}
           <aside className="flex flex-col gap-4">
+            {/* Tier filter */}
+            <div>
+              <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                <Star className="size-3" />
+                {t("tt.tier")}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-1">
+                <button
+                  onClick={() => setTierFilter(undefined)}
+                  className={`rounded-md px-2 py-1 text-[10px] transition-colors ${
+                    !tierFilter
+                      ? "bg-foreground text-background"
+                      : "border border-border hover:bg-muted"
+                  }`}
+                >
+                  {t("tt.allTiers")}
+                </button>
+                {["S", "A+", "A", "B+"].map((tier) => (
+                  <button
+                    key={tier}
+                    onClick={() =>
+                      setTierFilter(tierFilter === tier ? undefined : tier)
+                    }
+                    className={`rounded-md px-2 py-1 text-[10px] font-semibold transition-colors ${
+                      tierFilter === tier
+                        ? TIER_COLORS.S
+                        : TIER_COLORS[tier] ?? "border border-border"
+                    }`}
+                  >
+                    {tier}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Cluster filter */}
+            <div>
+              <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                <Layers className="size-3" />
+                {t("tt.clusterFilter")}
+              </p>
+              <div className="mt-2 flex flex-col gap-0.5">
+                <button
+                  onClick={() => setClusterFilter(undefined)}
+                  className={`rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
+                    !clusterFilter
+                      ? "bg-foreground text-background"
+                      : "hover:bg-muted"
+                  }`}
+                >
+                  {t("tt.allRegions")}
+                </button>
+                {CLUSTERS.map((cluster) => (
+                  <button
+                    key={cluster}
+                    onClick={() =>
+                      setClusterFilter(
+                        clusterFilter === cluster ? undefined : cluster,
+                      )
+                    }
+                    className={`rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
+                      clusterFilter === cluster
+                        ? "bg-foreground text-background"
+                        : "hover:bg-muted"
+                    }`}
+                  >
+                    {t(`tt.cluster.${cluster}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <Separator />
+
             {/* Region filter */}
             <div>
               <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
@@ -291,7 +422,7 @@ export default function ThinkTanks() {
                       className={`size-1.5 rounded-full ${
                         regionFilter === region
                           ? "bg-current opacity-70"
-                          : REGION_COLORS[region] ?? "bg-muted-foreground"
+                          : (REGION_COLORS[region] ?? "bg-muted-foreground").split(" ")[0]
                       }`}
                     />
                   </button>
@@ -303,11 +434,14 @@ export default function ThinkTanks() {
 
             {/* Tank list */}
             <div>
-              <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                <Building2 className="size-3" />
-                {t("tt.institutions")}
+              <p className="flex items-center justify-between text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <Building2 className="size-3" />
+                  {t("tt.institutions")}
+                </span>
+                <span className="tabular-nums">{displayTanks.length}</span>
               </p>
-              <div className="mt-2 flex max-h-[50vh] flex-col gap-0.5 overflow-y-auto">
+              <div className="mt-2 flex max-h-[40vh] flex-col gap-0.5 overflow-y-auto">
                 <button
                   onClick={() => setSelectedTank(undefined)}
                   className={`rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
@@ -316,14 +450,9 @@ export default function ThinkTanks() {
                       : "hover:bg-muted"
                   }`}
                 >
-                  {t("tt.allTanks")}{" "}
-                  {tankStats && (
-                    <span className="opacity-60">
-                      ({Object.values(tankStats).reduce((s, ts) => s + ts.count, 0)})
-                    </span>
-                  )}
+                  {t("tt.allTanks")}
                 </button>
-                {displayTanks?.map((tank) => {
+                {displayTanks.map((tank) => {
                   const ts = tankStats?.[tank.slug];
                   return (
                     <button
@@ -333,15 +462,28 @@ export default function ThinkTanks() {
                           selectedTank === tank.slug ? undefined : tank.slug,
                         )
                       }
-                      className={`flex items-center justify-between rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
+                      className={`flex items-center justify-between gap-2 rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
                         selectedTank === tank.slug
                           ? "bg-foreground text-background"
                           : "hover:bg-muted"
                       }`}
                     >
-                      <span className="truncate">{tank.name}</span>
-                      {ts && (
-                        <span className="ms-2 shrink-0 text-[10px] opacity-60">
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        {tank.tier && (
+                          <span
+                            className={`shrink-0 rounded px-1 py-px text-[8px] font-bold leading-3 ${
+                              selectedTank === tank.slug
+                                ? "bg-background/20"
+                                : TIER_COLORS[tank.tier] ?? ""
+                            }`}
+                          >
+                            {tank.tier}
+                          </span>
+                        )}
+                        <span className="truncate">{tank.name}</span>
+                      </span>
+                      {ts && ts.count > 0 && (
+                        <span className="shrink-0 text-[10px] tabular-nums opacity-60">
                           {ts.count}
                         </span>
                       )}
@@ -378,9 +520,9 @@ export default function ThinkTanks() {
 
           {/* Publications feed */}
           <div className="flex flex-col gap-3">
-            {/* Active filter indicator */}
-            {(selectedTank || search) && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            {/* Active filters */}
+            {(selectedTank || search || tierFilter || clusterFilter || regionFilter) && (
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <span>
                   {pubs ? pubs.length : "…"} {t("tt.pubs")}
                 </span>
@@ -389,6 +531,39 @@ export default function ThinkTanks() {
                     {tankStats?.[selectedTank]?.name ?? selectedTank}
                     <button
                       onClick={() => setSelectedTank(undefined)}
+                      className="ms-0.5 hover:text-foreground"
+                    >
+                      ×
+                    </button>
+                  </Badge>
+                )}
+                {tierFilter && (
+                  <Badge variant="secondary" className="gap-1 text-[10px]">
+                    {tierFilter}
+                    <button
+                      onClick={() => setTierFilter(undefined)}
+                      className="ms-0.5 hover:text-foreground"
+                    >
+                      ×
+                    </button>
+                  </Badge>
+                )}
+                {clusterFilter && (
+                  <Badge variant="secondary" className="gap-1 text-[10px]">
+                    {t(`tt.cluster.${clusterFilter}`)}
+                    <button
+                      onClick={() => setClusterFilter(undefined)}
+                      className="ms-0.5 hover:text-foreground"
+                    >
+                      ×
+                    </button>
+                  </Badge>
+                )}
+                {regionFilter && (
+                  <Badge variant="secondary" className="gap-1 text-[10px]">
+                    {t(REGION_MAP[regionFilter] ?? regionFilter)}
+                    <button
+                      onClick={() => setRegionFilter(undefined)}
                       className="ms-0.5 hover:text-foreground"
                     >
                       ×
@@ -465,21 +640,34 @@ export default function ThinkTanks() {
                   </div>
 
                   <div className="mt-3 flex flex-wrap items-center gap-2">
-                    {/* Tank badge */}
+                    {/* Tank badge with tier */}
                     <span
-                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ${
                         REGION_COLORS[tankInfo?.region ?? ""] ??
                         "bg-muted text-muted-foreground"
                       }`}
                     >
                       <Globe className="size-2.5" />
                       {tankInfo?.name ?? pub.thinkTankSlug}
+                      {tankInfo?.tier && (
+                        <span className="rounded bg-foreground/10 px-1 text-[8px] font-bold">
+                          {tankInfo.tier}
+                        </span>
+                      )}
                     </span>
+
+                    {/* Website link */}
+                    {tankInfo?.website && (
+                      <span className="hidden items-center gap-1 text-[10px] text-muted-foreground/70 sm:flex">
+                        <ExternalLink className="size-2.5" />
+                        {new URL(tankInfo.website).hostname.replace("www.", "")}
+                      </span>
+                    )}
 
                     {/* Date */}
                     <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                       <Calendar className="size-2.5" />
-                      {fmtDate(pub.publishedAt)}
+                      {fmtDate(pub.publishedAt, lang === "fa")}
                     </span>
 
                     {/* Topics */}
