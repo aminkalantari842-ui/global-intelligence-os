@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import { useI18n } from "@/i18n/context";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { motion } from "framer-motion";
@@ -48,6 +49,7 @@ function SectionHeading({
 }
 
 export default function Landing() {
+  const { t, lang } = useI18n();
   const graph = useQuery(api.graph.getGraph);
   const stats = useQuery(api.graph.getStats);
   const seed = useMutation(api.graph.seedIfEmpty);
@@ -63,7 +65,7 @@ export default function Landing() {
   // Gentle demo loop: rotate the highlighted edge every few seconds.
   useEffect(() => {
     if (!graph || graph.relations.length === 0) return;
-    const id = window.setInterval(() => setDemoTick((t) => t + 1), 4200);
+    const id = window.setInterval(() => setDemoTick((tick) => tick + 1), 4200);
     return () => window.clearInterval(id);
   }, [graph === undefined]);
 
@@ -84,29 +86,29 @@ export default function Landing() {
     graph?.actors.find((a) => a.slug === slug)?.name ?? slug;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-background text-foreground" dir={lang === "fa" ? "rtl" : "ltr"}>
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-40 border-b border-border/70 bg-background/80 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-4 sm:px-6">
           <Link to="/" className="flex items-center gap-2.5">
             <Mark />
             <span className="text-sm font-semibold tracking-tight">
-              Global Intelligence OS
+              {t("app.name")}
             </span>
           </Link>
           <nav className="hidden items-center gap-6 text-xs text-muted-foreground md:flex">
-            <a href="#graph" className="transition-colors hover:text-foreground">Graph</a>
-            <a href="#method" className="transition-colors hover:text-foreground">Method</a>
-            <a href="#evidence" className="transition-colors hover:text-foreground">Evidence</a>
-            <a href="#access" className="transition-colors hover:text-foreground">Access</a>
+            <a href="#graph" className="transition-colors hover:text-foreground">{t("land.navGraph")}</a>
+            <a href="#method" className="transition-colors hover:text-foreground">{t("land.navMethod")}</a>
+            <a href="#thinktanks" className="transition-colors hover:text-foreground">{t("land.navThinktanks")}</a>
+            <a href="#analyst" className="transition-colors hover:text-foreground">{t("land.navAnalyst")}</a>
           </nav>
           <div className="flex items-center gap-2">
             <Button asChild variant="ghost" size="sm">
-              <Link to="/auth" className="text-xs">Sign in</Link>
+              <Link to="/auth" className="text-xs">{t("btn.signin")}</Link>
             </Button>
             <Button asChild size="sm">
               <Link to="/auth?returnTo=%2Fdashboard" className="text-xs">
-                Request access
+                {t("btn.signup")}
               </Link>
             </Button>
           </div>
@@ -117,26 +119,24 @@ export default function Landing() {
       <section id="graph" className="mx-auto w-full max-w-6xl px-4 pb-16 pt-14 sm:px-6 sm:pt-20">
         <motion.div {...fadeSlow} className="mx-auto max-w-2xl text-center">
           <p className="text-[10px] font-medium uppercase tracking-[0.24em] text-muted-foreground">
-            Actor Relationship Intelligence · Enterprise
+            {t("land.kicker")}
           </p>
           <h1 className="mt-4 text-4xl font-semibold leading-[1.08] tracking-tight sm:text-5xl">
-            The map of who moves whom.
+            {t("land.title")}
           </h1>
           <p className="mx-auto mt-4 max-w-xl text-sm leading-6 text-muted-foreground sm:text-base">
-            A relationship graph of geopolitical actors — states, institutions,
-            networks — where every edge is backed by a traceable evidence trail.
-            No assertions without attribution.
+            {t("land.desc")}
           </p>
           <div className="mt-7 flex items-center justify-center gap-3">
             <Button asChild size="sm" className="h-9 px-4">
               <Link to="/auth?returnTo=%2Fdashboard" className="gap-1.5 text-xs">
-                Open the graph
+                {t("land.openGraph")}
                 <ArrowRight className="size-3.5" />
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm" className="h-9 px-4">
               <a href="#method" className="text-xs">
-                How confidence is built
+                {t("btn.howConfidence")}
               </a>
             </Button>
           </div>
@@ -153,12 +153,12 @@ export default function Landing() {
               <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
                 <span className="flex items-center gap-1.5">
                   <GitFork className="size-3.5" />
-                  Actor Relationship Graph
+                  {t("nav.graph")}
                 </span>
                 <span className="hidden sm:inline">
                   {graph
-                    ? `${graph.actors.length} actors · ${graph.relations.length} edges`
-                    : "loading…"}
+                    ? `${graph.actors.length} ${t("stat.actors")} · ${graph.relations.length} ${t("stat.edges")}`
+                    : t("dash.loading")}
                 </span>
               </div>
               <span className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
@@ -181,22 +181,18 @@ export default function Landing() {
                 <div className="flex h-full items-center justify-center">
                   <div className="text-center">
                     <div className="mx-auto size-6 animate-spin rounded-full border border-border border-t-foreground/60" />
-                    <p className="mt-3 text-xs text-muted-foreground">Rendering graph…</p>
+                    <p className="mt-3 text-xs text-muted-foreground">{t("dash.loading")}</p>
                   </div>
                 </div>
               )}
             </div>
             <div className="flex items-center justify-between border-t border-border/70 px-4 py-2 text-[10px] text-muted-foreground">
-              <span>Every edge carries a confidence score and typed sources.</span>
+              <span>{t("graph.help")}</span>
               <span className="tabular-nums">
-                {graph ? `${graph.relations.length} live edges` : "—"}
+                {graph ? `${graph.relations.length} ${t("stat.edges")}` : "—"}
               </span>
             </div>
           </div>
-          <p className="mt-3 text-center text-[10px] text-muted-foreground/70">
-            Interactive sample · drag nodes, scroll to zoom, click an edge to inspect it
-            in the console.
-          </p>
         </motion.div>
       </section>
 
@@ -205,13 +201,13 @@ export default function Landing() {
         <div className="mx-auto grid w-full max-w-6xl grid-cols-2 gap-6 px-4 py-10 sm:px-6 md:grid-cols-4">
           {(
             [
-              ["Actors under watch", graph ? String(graph.actors.length) : "—"],
-              ["Evidence-backed edges", graph ? String(graph.relations.length) : "—"],
+              [t("land.statsActors"), graph ? String(graph.actors.length) : "—"],
+              [t("land.statsEdges"), graph ? String(graph.relations.length) : "—"],
               [
-                "Corroborated ties",
+                t("land.statsCorroborated"),
                 stats !== undefined ? `${stats.corroboratedShare}%` : "—",
               ],
-              ["Traceable events", stats ? String(stats.evidenceCount) : "—"],
+              [t("land.statsEvents"), stats ? String(stats.evidenceCount) : "—"],
             ] as const
           ).map(([label, value]) => (
             <div key={label}>
@@ -227,10 +223,8 @@ export default function Landing() {
       {/* ── Method ─────────────────────────────────────────────────────── */}
       <section id="method" className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
         <motion.div {...fadeSlow}>
-          <SectionHeading eyebrow="Method" title="Edges are earned, not assumed.">
-            Confidence is computed deterministically from source quality,
-            corroboration and freshness. The graph never invents a relationship; it
-            renders what the evidence supports — and marks what it disputes.
+          <SectionHeading eyebrow={t("land.navMethod")} title={t("land.methodTitle")}>
+            {t("land.methodDesc")}
           </SectionHeading>
         </motion.div>
 
@@ -239,18 +233,18 @@ export default function Landing() {
             [
               {
                 icon: FileSearch,
-                title: "Typed sources",
-                body: "Each event cites publication, URL, date, and a stance: corroborating, reporting, or skeptical.",
+                title: t("land.method1Title"),
+                body: t("land.method1Body"),
               },
               {
                 icon: GitFork,
-                title: "Disagreement preserved",
-                body: "Conflicting assessments become disputed records — surfaced in the graph, never silently merged.",
+                title: t("land.method2Title"),
+                body: t("land.method2Body"),
               },
               {
                 icon: ShieldCheck,
-                title: "Deterministic scoring",
-                body: "Confidence and intensity are model outputs, not model opinions. Recompute the pipeline, get the same number.",
+                title: t("land.method3Title"),
+                body: t("land.method3Body"),
               },
             ] as const
           ).map((card) => (
@@ -263,37 +257,31 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── Evidence walkthrough ───────────────────────────────────────── */}
-      <section id="evidence" className="border-y border-border/70 bg-muted/30">
+      {/* ── Think Tanks ────────────────────────────────────────────────── */}
+      <section id="thinktanks" className="border-y border-border/70 bg-muted/30">
         <div className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
           <div className="grid items-center gap-10 lg:grid-cols-2">
             <motion.div {...fadeSlow}>
               <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
-                Evidence trail
+                {t("land.navThinktanks")}
               </p>
               <h2 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
-                Click any edge. Read the receipts.
+                {t("land.ttTitle")}
               </h2>
               <p className="mt-3 text-sm leading-6 text-muted-foreground">
-                Every relationship opens into a timestamped trail of events. Every
-                event is labeled observed fact, reported claim, or assessment — and
-                links to the original publication.
+                {t("land.ttDesc")}
               </p>
               <ul className="mt-6 space-y-3 text-sm">
-                {[
-                  "Typed sources with stance on every claim",
-                  "Claim labels: observed / reported / assessment",
-                  "Confidence shown per event, recomputed on arrival",
-                ].map((t) => (
-                  <li key={t} className="flex items-start gap-2.5">
+                {[t("land.ttConnect")].map((text) => (
+                  <li key={text} className="flex items-start gap-2.5">
                     <Check className="mt-0.5 size-4 shrink-0 text-foreground" />
-                    <span className="text-muted-foreground">{t}</span>
+                    <span className="text-muted-foreground">{text}</span>
                   </li>
                 ))}
               </ul>
               <Button asChild variant="outline" size="sm" className="mt-7 h-9 px-4">
-                <Link to="/auth?returnTo=%2Fdashboard" className="gap-1.5 text-xs">
-                  Inspect an edge
+                <Link to="/auth?returnTo=%2Fthinktanks" className="gap-1.5 text-xs">
+                  {t("nav.thinktanks")}
                   <ArrowRight className="size-3.5" />
                 </Link>
               </Button>
@@ -301,13 +289,128 @@ export default function Landing() {
 
             <motion.div {...fadeSlow} className="rounded-lg border border-border bg-card p-5">
               <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                Sample edge record
+                {t("stat.publications")}
+              </p>
+              <div className="mt-3 rounded-md border border-border/70 p-3">
+                <p className="text-xs font-medium">
+                  {t("land.ttTitle")}
+                </p>
+                <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+                  {t("land.ttDesc")}
+                </p>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3 text-[11px]">
+                <div className="rounded-md border border-border/70 p-2.5">
+                  <p className="text-muted-foreground">{t("stat.actors")}</p>
+                  <p className="mt-0.5 font-semibold tabular-nums">
+                    23+
+                  </p>
+                </div>
+                <div className="rounded-md border border-border/70 p-2.5">
+                  <p className="text-muted-foreground">{t("stat.publications")}</p>
+                  <p className="mt-0.5 font-semibold tabular-nums">
+                    {t("dash.loading")}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 rounded-md border border-border/70 p-3">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+                  {t("land.status")}
+                </p>
+                <p className="mt-1.5 text-xs font-medium">
+                  {t("tt.feedActive")}
+                </p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {t("tt.desc")}
+                </p>
+              </div>
+            </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* ── AI Analyst ─────────────────────────────────────────────────── */}
+      <section id="analyst" className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
+        <div className="grid items-center gap-10 lg:grid-cols-2">
+          <motion.div {...fadeSlow} className="order-2 lg:order-1 rounded-lg border border-border bg-card p-5">
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs">👤</div>
+                <div className="rounded-lg border border-border/70 bg-muted/30 px-3 py-2 text-xs leading-5">
+                  {lang === "fa" ? "تحلیل روابط ایران و چین در حوزه انرژی" : "Analyze Iran-China energy relations"}
+                </div>
+              </div>
+              <div className="flex items-start gap-3 flex-row-reverse">
+                <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-foreground text-[10px] font-bold text-background">GI</div>
+                <div className="rounded-lg border border-border/70 bg-card px-3 py-2 text-xs leading-5 text-muted-foreground">
+                  {lang === "fa"
+                    ? "بر اساس گراف بازیگران، روابط ایران و چین شامل تأمین تسلیحاتی، همکاری انرژی و مذاکرات دیپلماتیک است..."
+                    : "Based on the actor graph, Iran-China relations include arms supply, energy cooperation, and diplomatic negotiations..."}
+                </div>
+              </div>
+            </div>
+            <Button asChild variant="outline" size="sm" className="mt-6 h-9 px-4">
+              <Link to="/auth?returnTo=%2Fanalyst" className="gap-1.5 text-xs">
+                {t("nav.analyst")}
+                <ArrowRight className="size-3.5" />
+              </Link>
+            </Button>
+          </motion.div>
+
+          <motion.div {...fadeSlow} className="order-1 lg:order-2">
+            <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+              {t("land.navAnalyst")}
+            </p>
+            <h2 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
+              {t("land.aiTitle")}
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-muted-foreground">
+              {t("land.aiDesc")}
+            </p>
+          </motion.div>
+        </div>
+      </section>
+
+      {/* ── Evidence walkthrough ───────────────────────────────────────── */}
+      <section id="evidence" className="border-y border-border/70 bg-muted/30">
+        <div className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
+          <div className="grid items-center gap-10 lg:grid-cols-2">
+            <motion.div {...fadeSlow}>
+              <p className="text-[10px] font-medium uppercase tracking-[0.22em] text-muted-foreground">
+                {t("edge.evidenceTrail")}
+              </p>
+              <h2 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">
+                {t("land.evidenceTitle")}
+              </h2>
+              <ul className="mt-6 space-y-3 text-sm">
+                {[
+                  t("land.method1Title"),
+                  t("claim.REPORTED_CLAIM"),
+                  t("edge.confidence"),
+                ].map((item) => (
+                  <li key={item} className="flex items-start gap-2.5">
+                    <Check className="mt-0.5 size-4 shrink-0 text-foreground" />
+                    <span className="text-muted-foreground">{item}</span>
+                  </li>
+                ))}
+              </ul>
+              <Button asChild variant="outline" size="sm" className="mt-7 h-9 px-4">
+                <Link to="/auth?returnTo=%2Fdashboard" className="gap-1.5 text-xs">
+                  {t("land.openGraph")}
+                  <ArrowRight className="size-3.5" />
+                </Link>
+              </Button>
+            </motion.div>
+
+            <motion.div {...fadeSlow} className="rounded-lg border border-border bg-card p-5">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                {t("land.sampleEdge")}
               </p>
               <div className="mt-3 rounded-md border border-border/70 p-3">
                 <p className="text-xs font-medium">
                   {demoRel
                     ? `${nameOf(demoRel.sourceSlug)} ↔ ${nameOf(demoRel.targetSlug)}`
-                    : "Loading sample…"}
+                    : t("dash.loading")}
                 </p>
                 <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
                   {demoRel?.summary ?? ""}
@@ -315,13 +418,13 @@ export default function Landing() {
               </div>
               <div className="mt-3 grid grid-cols-2 gap-3 text-[11px]">
                 <div className="rounded-md border border-border/70 p-2.5">
-                  <p className="text-muted-foreground">Confidence</p>
+                  <p className="text-muted-foreground">{t("edge.confidence")}</p>
                   <p className="mt-0.5 font-semibold tabular-nums">
                     {demoRel ? `${demoRel.confidence}%` : "—"}
                   </p>
                 </div>
                 <div className="rounded-md border border-border/70 p-2.5">
-                  <p className="text-muted-foreground">Independent sources</p>
+                  <p className="text-muted-foreground">{t("edge.sources")}</p>
                   <p className="mt-0.5 font-semibold tabular-nums">
                     {demoRel ? demoRel.sourceCount : "—"}
                   </p>
@@ -329,14 +432,10 @@ export default function Landing() {
               </div>
               <div className="mt-3 rounded-md border border-border/70 p-3">
                 <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                  Status
+                  {t("land.status")}
                 </p>
                 <p className="mt-1.5 text-xs font-medium">
-                  {demoRel ? demoRel.status.replace("_", " ") : "—"}
-                </p>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  Reuters · AP · IAEA · open-source trackers — cited per event in the
-                  console.
+                  {demoRel ? (t(`status.${demoRel.status}`) ?? demoRel.status.replace("_", " ")) : "—"}
                 </p>
               </div>
             </motion.div>
@@ -347,9 +446,8 @@ export default function Landing() {
       {/* ── Access ─────────────────────────────────────────────────────── */}
       <section id="access" className="mx-auto w-full max-w-6xl px-4 py-20 sm:px-6">
         <motion.div {...fadeSlow}>
-          <SectionHeading eyebrow="Access" title="Built for institutional teams.">
-            Analyst desks, due-diligence units, and policy shops that need the
-            relationship layer under their own workflow.
+          <SectionHeading eyebrow={t("land.navGraph")} title={t("land.accessTitle")}>
+            {t("land.ttDesc")}
           </SectionHeading>
         </motion.div>
 
@@ -357,21 +455,21 @@ export default function Landing() {
           {(
             [
               {
-                name: "Desk",
-                desc: "Single-analyst access to the live graph and evidence trails.",
-                items: ["Full graph console", "Evidence inspection", "Email support"],
+                name: t("tier.desk"),
+                desc: t("tier.deskDesc"),
+                items: [t("edge.confidence"), t("edge.evidenceTrail"), t("tt.feedActive")],
                 featured: false,
               },
               {
-                name: "Team",
-                desc: "Shared watchlists and annotations for research units.",
-                items: ["Everything in Desk", "Shared workspaces", "Export to PDF/CSV"],
+                name: t("tier.team"),
+                desc: t("tier.teamDesc"),
+                items: [t("dash.registryStatus"), t("dash.registryLive"), t("stat.publications")],
                 featured: true,
               },
               {
-                name: "Institution",
-                desc: "API access and private ingestion of your own sources.",
-                items: ["Everything in Team", "REST + export API", "Private connectors"],
+                name: t("tier.institution"),
+                desc: t("tier.instDesc"),
+                items: [t("dash.registryStatus"), t("stat.publications"), t("tt.feedActive")],
                 featured: false,
               },
             ] as const
@@ -387,7 +485,7 @@ export default function Landing() {
                 <p className="text-sm font-semibold">{tier.name}</p>
                 {tier.featured && (
                   <span className="rounded-full border border-foreground/30 px-2 py-0.5 text-[9px] uppercase tracking-wider text-muted-foreground">
-                    Most common
+                    {t("tier.mostCommon")}
                   </span>
                 )}
               </div>
@@ -412,15 +510,11 @@ export default function Landing() {
           className="mx-auto mt-12 max-w-4xl rounded-lg border border-border bg-card px-6 py-10 text-center"
         >
           <h3 className="text-lg font-semibold tracking-tight">
-            See the graph with your own data.
+            {t("land.accessCta")}
           </h3>
-          <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
-            Bring a country file, a sanctions portfolio, or a supply chain. We map the
-            actors and connect them to what the sources actually say.
-          </p>
           <Button asChild size="sm" className="mt-6 h-9 px-5">
             <Link to="/auth?returnTo=%2Fdashboard" className="gap-1.5 text-xs">
-              Request access
+              {t("btn.signup")}
               <ArrowRight className="size-3.5" />
             </Link>
           </Button>
@@ -432,9 +526,9 @@ export default function Landing() {
         <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-3 px-4 py-8 text-xs text-muted-foreground sm:flex-row sm:px-6">
           <div className="flex items-center gap-2">
             <Mark className="size-4" />
-            <span>Global Intelligence OS</span>
+            <span>{t("app.name")}</span>
           </div>
-          <p>Evidence → Intelligence → Analysis → Decision Support</p>
+          <p>{t("land.footer")}</p>
           <p>© 2026</p>
         </div>
       </footer>

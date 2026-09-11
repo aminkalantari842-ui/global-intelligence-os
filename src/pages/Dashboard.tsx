@@ -22,25 +22,25 @@ import {
 } from "lucide-react";
 
 const KIND_LABEL: Record<string, string> = {
-  ALLIANCE: "Alliance",
-  COOPERATION: "Cooperation",
-  NEGOTIATION: "Negotiation",
-  SUPPLY: "Supply",
-  PROXY_SUPPORT: "Proxy support",
-  COMPETITION: "Competition",
-  TENSION: "Tension",
-  SANCTIONS: "Sanctions",
-  CONFLICT: "Conflict",
+  ALLIANCE: "rel.ALLIANCE",
+  COOPERATION: "rel.COOPERATION",
+  NEGOTIATION: "rel.NEGOTIATION",
+  SUPPLY: "rel.SUPPLY",
+  PROXY_SUPPORT: "rel.PROXY_SUPPORT",
+  COMPETITION: "rel.COMPETITION",
+  TENSION: "rel.TENSION",
+  SANCTIONS: "rel.SANCTIONS",
+  CONFLICT: "rel.CONFLICT",
 };
 
 const STATUS_LABEL: Record<string, string> = {
-  CONFIRMED: "Confirmed",
-  REPORTED: "Reported",
-  DISPUTED: "Disputed",
+  CONFIRMED: "status.CONFIRMED",
+  REPORTED: "status.REPORTED",
+  DISPUTED: "status.DISPUTED",
 };
 
 function fmtDate(ms: number) {
-  return new Date(ms).toLocaleDateString("en-GB", {
+  return new Date(ms).toLocaleDateString("fa-IR", {
     day: "2-digit",
     month: "short",
     year: "numeric",
@@ -120,6 +120,7 @@ function EdgePanel({
   actorsBySlug: Map<string, GraphActor>;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const events = useQuery(api.graph.getRelationEvents, {
     relationId: relation._id as Id<"relationships">,
   });
@@ -132,7 +133,7 @@ function EdgePanel({
       <div className="flex items-start justify-between gap-2 px-4 pt-4">
         <div>
           <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-            {KIND_LABEL[relation.kind] ?? relation.kind} · {STATUS_LABEL[relation.status] ?? relation.status}
+            {t(KIND_LABEL[relation.kind] ?? relation.kind)} · {t(STATUS_LABEL[relation.status] ?? relation.status)}
           </p>
           <h3 className="mt-1 text-sm font-semibold leading-5">
             {source?.name ?? relation.sourceSlug}
@@ -151,23 +152,23 @@ function EdgePanel({
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-3 px-4 pt-4 text-xs">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Confidence</p>
+          <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("edge.confidence")}</p>
           <div className="mt-1">
             <ConfidenceBar value={relation.confidence} />
           </div>
         </div>
         <div>
-          <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Intensity</p>
+          <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("edge.intensity")}</p>
           <div className="mt-1">
             <ConfidenceBar value={relation.weight} />
           </div>
         </div>
         <div>
-          <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Sources</p>
-          <p className="mt-0.5 font-medium tabular-nums">{relation.sourceCount} independent</p>
+          <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("edge.sources")}</p>
+          <p className="mt-0.5 font-medium tabular-nums">{relation.sourceCount} {t("edge.independent")}</p>
         </div>
         <div>
-          <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">Observed since</p>
+          <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">{t("edge.since")}</p>
           <p className="mt-0.5 font-medium">{fmtDate(relation.since)}</p>
         </div>
       </div>
@@ -176,10 +177,10 @@ function EdgePanel({
 
       <div className="flex items-center justify-between px-4 pb-2">
         <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-          Evidence trail
+          {t("edge.evidenceTrail")}
         </p>
         <p className="text-[10px] text-muted-foreground">
-          {events === undefined ? "…" : `${events.length} events`}
+          {events === undefined ? "…" : `${events.length} ${t("edge.events")}`}
         </p>
       </div>
 
@@ -192,7 +193,7 @@ function EdgePanel({
         )}
         {events?.length === 0 && (
           <p className="px-2 text-xs text-muted-foreground">
-            No recorded events on this relationship yet.
+            {t("dash.empty")}
           </p>
         )}
         <ol className="relative space-y-3 px-2">
@@ -200,21 +201,21 @@ function EdgePanel({
             <li key={e._id} className="relative rounded-md border border-border/70 bg-card p-3">
               <div className="flex items-center justify-between gap-2">
                 <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                  {new Date(e.timestamp).toLocaleDateString("en-GB", {
+                  {new Date(e.timestamp).toLocaleDateString("fa-IR", {
                     day: "2-digit",
                     month: "short",
                     year: "numeric",
-                  })}{" "}
+                  })}{""}
                   · {e.type.toLowerCase()}
                 </p>
                 <span className="rounded-full border border-border px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-muted-foreground">
-                  {e.claimType.replace("_", " ")}
+                  {t(`claim.${e.claimType}`) ?? e.claimType.replace("_", " ")}
                 </span>
               </div>
               <p className="mt-1.5 text-xs font-medium leading-5">{e.title}</p>
               <p className="mt-1 text-[11px] leading-4 text-muted-foreground">{e.summary}</p>
               <div className="mt-2 flex items-center gap-2">
-                <span className="text-[10px] text-muted-foreground">confidence</span>
+                <span className="text-[10px] text-muted-foreground">{t("edge.confidence")}</span>
                 <ConfidenceBar value={e.confidence} />
               </div>
               <div className="mt-2 border-t border-border/60 pt-1">
@@ -243,6 +244,7 @@ function ActorPanel({
   onOpenEdge: (r: GraphRelation) => void;
   onClear: () => void;
 }) {
+  const { t } = useI18n();
   const connected = relations.filter(
     (r) => r.sourceSlug === actor.slug || r.targetSlug === actor.slug,
   );
@@ -257,7 +259,7 @@ function ActorPanel({
       <div className="flex items-start justify-between gap-2 px-4 pt-4">
         <div>
           <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-            {actor.kind.replace("_", " ")} · tier {actor.tier}
+            {t(`kind.${actor.kind}`) ?? actor.kind.replace("_", " ")} · {t("edge.since")} {actor.tier}
           </p>
           <h3 className="mt-1 text-sm font-semibold leading-5">{actor.name}</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">{actor.country} · {actor.region}</p>
@@ -283,15 +285,15 @@ function ActorPanel({
       </div>
 
       <div className="grid grid-cols-3 gap-3 px-4 pt-4">
-        <Stat label="Edges" value={String(connected.length)} />
-        <Stat label="Mean conf." value={`${meanConfidence}%`} />
-        <Stat label="Sources" value={actor.sourceCount >= 1000 ? `${(actor.sourceCount / 1000).toFixed(1)}k` : String(actor.sourceCount)} />
+        <Stat label={t("stat.edges")} value={String(connected.length)} />
+        <Stat label={t("edge.confidence")} value={`${meanConfidence}%`} />
+        <Stat label={t("edge.sources")} value={actor.sourceCount >= 1000 ? `${(actor.sourceCount / 1000).toFixed(1)}k` : String(actor.sourceCount)} />
       </div>
 
       <Separator className="my-4" />
 
       <p className="px-4 pb-2 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-        Relationships ({connected.length})
+        {t("nav.graph")} ({connected.length})
       </p>
       <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
         {connected.map((r) => {
@@ -306,13 +308,13 @@ function ActorPanel({
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-medium">{other?.name ?? otherSlug}</span>
                 <span className="text-[9px] uppercase tracking-wider text-muted-foreground">
-                  {KIND_LABEL[r.kind] ?? r.kind}
+                  {t(KIND_LABEL[r.kind] ?? r.kind) ?? r.kind}
                 </span>
               </div>
               <div className="mt-1.5 flex items-center gap-2">
                 <ConfidenceBar value={r.confidence} />
                 <span className="ml-auto text-[10px] text-muted-foreground">
-                  {STATUS_LABEL[r.status] ?? r.status}
+                  {t(STATUS_LABEL[r.status] ?? r.status) ?? r.status}
                 </span>
               </div>
             </button>
@@ -362,16 +364,16 @@ export default function Dashboard() {
     const q = search.trim().toLowerCase();
     return rels.filter((r) => {
       const s = actorsBySlug.get(r.sourceSlug);
-      const t = actorsBySlug.get(r.targetSlug);
+      const tgt = actorsBySlug.get(r.targetSlug);
       return (
         s?.name.toLowerCase().includes(q) ||
-        t?.name.toLowerCase().includes(q) ||
+        tgt?.name.toLowerCase().includes(q) ||
         s?.aliases.some((a) => a.toLowerCase().includes(q)) ||
-        t?.aliases.some((a) => a.toLowerCase().includes(q)) ||
-        (KIND_LABEL[r.kind] ?? r.kind).toLowerCase().includes(q)
+        tgt?.aliases.some((a) => a.toLowerCase().includes(q)) ||
+        (t(KIND_LABEL[r.kind] ?? r.kind) ?? r.kind).toLowerCase().includes(q)
       );
     });
-  }, [graph?.relations, search, actorsBySlug]);
+  }, [graph?.relations, search, actorsBySlug, t]);
 
   const highlightSlug = useMemo(() => {
     if (selectedSlug) return selectedSlug;
@@ -406,7 +408,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground" dir={lang === "fa" ? "rtl" : "ltr">
+    <div className="flex h-screen flex-col bg-background text-foreground" dir={lang === "fa" ? "rtl" : "ltr"}>
       {/* Top bar */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
         <div className="flex items-center gap-3">
@@ -463,7 +465,7 @@ export default function Dashboard() {
                         : "text-muted-foreground/60 hover:bg-muted"
                   }`}
                 >
-                  <span>{KIND_LABEL[k] ?? k}</span>
+                  <span>{t(KIND_LABEL[k] ?? k) ?? k}</span>
                   <span
                     className={`size-1.5 rounded-full ${
                       kindFilter.has(k) || kindFilter.size === 0
@@ -487,8 +489,8 @@ export default function Dashboard() {
             </div>
             <p className="text-[11px] leading-4">
               {stats
-                ? `${stats.actorCount} actors · ${stats.edgeCount} edges`
-                : "loading…"}
+                ? `${stats.actorCount} ${t("stat.actors")} · ${stats.edgeCount} ${t("stat.edges")}`
+                : t("dash.loading")}
             </p>
           </div>
 
@@ -514,10 +516,10 @@ export default function Dashboard() {
             <div className="flex items-center gap-4 overflow-x-auto">
               {stats && (
                 <>
-                  <Stat label="Actors" value={String(stats.actorCount)} />
-                  <Stat label="Edges" value={String(stats.edgeCount)} />
-                  <Stat label="Evidence" value={String(stats.evidenceCount)} />
-                  <Stat label="Corroborated" value={`${stats.corroboratedShare}%`} />
+                  <Stat label={t("stat.actors")} value={String(stats.actorCount)} />
+                  <Stat label={t("stat.edges")} value={String(stats.edgeCount)} />
+                  <Stat label={t("stat.evidence")} value={String(stats.evidenceCount)} />
+                  <Stat label={t("stat.corroborated")} value={`${stats.corroboratedShare}%`} />
                 </>
               )}
             </div>
@@ -527,7 +529,7 @@ export default function Dashboard() {
                 size="icon"
                 className="size-8"
                 onClick={() => graphRef.current?.__zoomBy?.(1.2)}
-                aria-label="Zoom in"
+                aria-label={t("dash.zoomIn")}
               >
                 <Plus className="size-4" />
               </Button>
@@ -563,9 +565,10 @@ export default function Dashboard() {
               </div>
             ) : graph.actors.length === 0 ? (
               <div className="flex h-full items-center justify-center rounded-md border border-border/60 bg-muted/30">
-                <div className="text-center">                  <p className="text-sm font-medium">{t("dash.empty")}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {t("dash.seeding")}
+                <div className="text-center">
+                  <p className="text-sm font-medium">{t("dash.empty")}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t("dash.seeding")}
                   </p>
                 </div>
               </div>
@@ -589,7 +592,8 @@ export default function Dashboard() {
           </div>
 
           {/* Bottom ticker — latest observed updates */}
-          <footer className="hidden h-9 shrink-0 items-center gap-6 overflow-hidden border-t border-border px-4 text-[11px] text-muted-foreground md:flex">              <span className="uppercase tracking-[0.14em]">{t("dash.latestEvidence")}</span>
+          <footer className="hidden h-9 shrink-0 items-center gap-6 overflow-hidden border-t border-border px-4 text-[11px] text-muted-foreground md:flex">
+            <span className="uppercase tracking-[0.14em]">{t("dash.latestEvidence")}</span>
             {(graph?.relations ?? [])
               .slice()
               .sort((a, b) => b.updatedAt - a.updatedAt)
@@ -646,35 +650,35 @@ export default function Dashboard() {
               <Separator className="my-4" />
 
               <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                Confidence model
+                {t("edge.confidence")}
               </p>
               <ul className="mt-2 space-y-2 text-[11px] leading-4 text-muted-foreground">
                 <li className="flex justify-between gap-2">
-                  <span>Solid edge</span>
-                  <span className="text-foreground">Confirmed — corroborated</span>
+                  <span>{t("conf.solidEdge")}</span>
+                  <span className="text-foreground">{t("conf.solidEdgeDesc")}</span>
                 </li>
                 <li className="flex justify-between gap-2">
-                  <span>Dashed edge</span>
-                  <span className="text-foreground">Reported — single-source</span>
+                  <span>{t("conf.dashedEdge")}</span>
+                  <span className="text-foreground">{t("conf.dashedEdgeDesc")}</span>
                 </li>
                 <li className="flex justify-between gap-2">
-                  <span>Fine dashed</span>
-                  <span className="text-foreground">Disputed — never merged</span>
+                  <span>{t("conf.fineDashed")}</span>
+                  <span className="text-foreground">{t("conf.fineDashedDesc")}</span>
                 </li>
                 <li className="flex justify-between gap-2">
-                  <span>Outer ring</span>
-                  <span className="text-foreground">Mean edge confidence</span>
+                  <span>{t("conf.outerRing")}</span>
+                  <span className="text-foreground">{t("conf.outerRingDesc")}</span>
                 </li>
               </ul>
 
               <Separator className="my-4" />
 
               <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                Coverage
+                {t("edge.evidenceTrail")}
               </p>
               <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
                 {stats
-                  ? `${stats.activeEdges} active edges touched in the last 30 days across ${stats.actorCount} monitored actors, drawn from ${stats.sourcesSum.toLocaleString()} source references.`
+                  ? `${stats.activeEdges} ${t("stat.edges")} · ${stats.actorCount} ${t("stat.actors")} · ${stats.sourcesSum.toLocaleString()} ${t("edge.sources")}`
                   : "…"}
               </p>
             </div>
