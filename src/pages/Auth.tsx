@@ -111,7 +111,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
   const { t, lang } = useI18n();
 
   return (
-    <div className="min-h-screen flex flex-col" dir={lang === "fa" ? "rtl" : "ltr`}>
+    <div className="min-h-screen flex flex-col" dir={lang === "fa" ? "rtl" : "ltr"}>
 
       
       {/* Auth Content */}
