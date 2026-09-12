@@ -168,6 +168,55 @@ const schema = defineSchema(
         }),
       ),
     }).index("by_relation", ["relationId", "timestamp"]),
+
+    // ─── Actor Mentions (Phase 2) ─────────────────────────────────────────
+    // Every time a think-tank publication references an actor (name or
+    // alias), one mention row links actor → publication. Written by the RSS
+    // pipeline, idempotent per (publication, actor) pair. Powers coverage
+    // sparklines, heat halos and per-actor recent-mention feeds.
+    actorMentions: defineTable({
+      actorSlug: v.string(),
+      pubId: v.id("publications"),
+      tankSlug: v.string(),
+      ts: v.number(), // publication timestamp
+    })
+      .index("by_actor", ["actorSlug", "ts"])
+      .index("by_pub", ["pubId"]),
+
+    // ─── Change Log (Phase 2) ─────────────────────────────────────────────
+    // Append-only audit trail of graph mutations. Enables "what changed
+    // since my last visit", per-actor new-change badges and history replay.
+    changeLog: defineTable({
+      kind: v.union(
+        v.literal("EDGE_ADDED"),
+        v.literal("EDGE_UPDATED"),
+        v.literal("EDGE_REMOVED"),
+        v.literal("ACTOR_ADDED"),
+      ),
+      slug: v.string(), // primary actor affected
+      otherSlug: v.optional(v.string()), // counterparty for edge changes
+      relationId: v.optional(v.id("relationships")),
+      detail: v.string(),
+      ts: v.number(),
+    }).index("by_ts", ["ts"]),
+
+    // ─── Per-user Watchlist (Phase 2) ─────────────────────────────────────
+    userWatchlists: defineTable({
+      userId: v.id("users"),
+      actorSlug: v.string(),
+      createdAt: v.number(),
+    }).index("by_user", ["userId"]),
+
+    // ─── Per-user View State (Phase 2) ────────────────────────────────────
+    // Generic key/value store per user: "lastSeen" (timestamp of the last
+    // processed change-log entry), "timeWindow" (graph time-scrub days).
+    userViewState: defineTable({
+      userId: v.id("users"),
+      key: v.string(),
+      value: v.number(),
+    })
+      .index("by_user", ["userId"])
+      .index("by_user_key", ["userId", "key"]),
   },
   {
     schemaValidation: false,

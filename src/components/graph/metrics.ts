@@ -185,3 +185,81 @@ export function topByPosition(
     .slice(0, limit)
     .map((r) => ({ ...r, value: Math.round((r.value / max) * 100) }));
 }
+
+// ─── Cluster hulls (Phase 2) ────────────────────────────────────────────────
+// Andrew's monotone chain convex hull over group member positions. Pure
+// geometry — used to draw translucent hulls around country/region clusters.
+export interface Pt {
+  x: number;
+  y: number;
+}
+
+export function convexHull(points: Pt[]): Pt[] {
+  if (points.length < 3) return points.slice();
+  const pts = points.slice().sort((a, b) => a.x - b.x || a.y - b.y);
+  const cross = (o: Pt, a: Pt, b: Pt) =>
+    (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  const lower: Pt[] = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0)
+      lower.pop();
+    lower.push(p);
+  }
+  const upper: Pt[] = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0)
+      upper.pop();
+    upper.push(p);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+/**
+ * Group actors by the given field (e.g. region, country, kind) for hull
+ * rendering. Groups smaller than minSize are skipped — a 1-2 member "hull"
+ * is visual noise.
+ */
+export function groupByField(
+  actors: GraphActor[],
+  field: "region" | "country" | "kind",
+  minSize = 2,
+): Map<string, GraphActor[]> {
+  const groups = new Map<string, GraphActor[]>();
+  for (const a of actors) {
+    const key = String(a[field] ?? "—");
+    const list = groups.get(key);
+    if (list) list.push(a);
+    else groups.set(key, [a]);
+  }
+  for (const [key, list] of groups) {
+    if (list.length < minSize) groups.delete(key);
+  }
+  return groups;
+}
+
+// ─── Coverage decay (Phase 2) ───────────────────────────────────────────────
+// Sum of daily mention counts with a 21-day half-life decay. Deterministic
+// and transparent: intensity = Σ count(day) · 0.5^(ageDays / 21).
+export const COVERAGE_HALF_LIFE_DAYS = 21;
+
+export function coverageIntensity(buckets: number[]): number {
+  let sum = 0;
+  for (let i = 0; i < buckets.length; i++) {
+    const ageDays = buckets.length - 1 - i;
+    sum += buckets[i] * Math.pow(0.5, ageDays / COVERAGE_HALF_LIFE_DAYS);
+  }
+  return Math.round(sum * 10) / 10;
+}
+
+/**
+ * Normalized halo intensity 0–1 for canvas rendering. The log dampening
+ * keeps a single viral day from saturating the visual field.
+ */
+export function haloLevel(buckets: number[]): number {
+  const intensity = coverageIntensity(buckets);
+  if (intensity <= 0) return 0;
+  return Math.min(1, Math.log10(1 + intensity) / 1.3);
+}

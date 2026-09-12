@@ -1,7 +1,15 @@
 import * as d3 from "d3-force";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/i18n/context";
-import { computeRisk, edgeRecency, actorDisplayName, fmtAgo } from "./metrics";
+import {
+  computeRisk,
+  convexHull,
+  edgeRecency,
+  actorDisplayName,
+  fmtAgo,
+  groupByField,
+  haloLevel,
+} from "./metrics";
 import type { GraphActor, GraphRelation } from "./types";
 
 export interface ActorNode extends d3.SimulationNodeDatum {
@@ -55,6 +63,12 @@ interface ActorGraphProps {
   kindFilter?: Set<string>;
   /** relationId → latest activity, from getEventMarkers (deterministic). */
   markers?: Record<string, EdgeMarker>;
+  /** Marker-age cutoff in days — older activity dots fade out (time-scrub). */
+  markerWindowDays?: number;
+  /** actorSlug → daily mention buckets (30d). Powers heat halos. */
+  coverage?: Record<string, number[]>;
+  /** Cluster hull grouping field; null disables hulls. */
+  hullBy?: "region" | "country" | "kind" | null;
 }
 
 const KIND_RADIUS: Record<string, number> = {
@@ -161,6 +175,9 @@ export default function ActorGraph({
   focusMode = true,
   kindFilter,
   markers,
+  markerWindowDays = 14,
+  coverage,
+  hullBy = null,
 }: ActorGraphProps) {
   const { t, lang } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -326,6 +343,43 @@ export default function ActorGraph({
     // Level of Detail tiers — density of cues scales with zoom.
     const lod = k < 0.55 ? 0 : k < 0.9 ? 1 : k < 1.35 ? 2 : 3;
 
+    // ── Cluster hulls — translucent envelopes around geographic/kind groups ──
+    if (hullBy && lod >= 1 && nodes.length >= 3) {
+      const groups = groupByField(
+        nodes.map((n) => n.actor),
+        hullBy,
+      );
+      for (const [, members] of groups) {
+        const pts = members
+          .map((m) => nodes.find((n) => n.id === m.slug))
+          .filter((n): n is ActorNode => !!n && n.x !== undefined && n.y !== undefined)
+          .map((n) => ({ x: n.x as number, y: n.y as number }));
+        const hull = convexHull(pts);
+        if (hull.length < 3) continue;
+        const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+        const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+        ctx.beginPath();
+        hull.forEach((p, i) => {
+          // Push hull points outward from the centroid for padding.
+          const px = p.x + (p.x - cx) * 0.24;
+          const py = p.y + (p.y - cy) * 0.24;
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.closePath();
+        ctx.globalAlpha = 0.045;
+        ctx.fillStyle = P.ink;
+        ctx.fill();
+        ctx.globalAlpha = 0.22;
+        ctx.strokeStyle = P.edge;
+        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = 1 / k;
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
+    }
+
     // ── Edges ──
     for (const link of links) {
       const s = link.source as ActorNode;
@@ -401,10 +455,12 @@ export default function ActorGraph({
         ctx.fill();
       }
 
-      // Event markers — recent observed activity on this edge. Fresh (≤7d)
-      // markers are solid, older ones half-toned; count label at high LoD.
+      // Event markers — recent observed activity on this edge, honoring the
+      // time-scrub window. Fresh (≤7d) markers are solid, older half-toned.
       const marker = markers?.[rel._id];
-      if (lod >= 1 && marker && marker.total > 0 && alpha > 0.1) {
+      const inWindow =
+        marker && now - marker.latestTs <= markerWindowDays * 86_400_000;
+      if (lod >= 1 && marker && inWindow && alpha > 0.1) {
         const fresh = edgeRecency(marker.latestTs, now) === "fresh";
         const p = qPoint(s0, c, t0, 0.5);
         const tg = qTangent(s0, c, t0, 0.5);
@@ -447,6 +503,25 @@ export default function ActorGraph({
 
       const r = node.radius * (isActive ? 1.12 : 1);
       ctx.globalAlpha = dimmed ? 0.28 : 1;
+
+      // Heat halo — recent mention coverage as concentric translucent rings.
+      // Intensity = deterministic decay over daily buckets (rules 4 & 7).
+      if (!dimmed) {
+        const buckets = coverage?.[node.id];
+        const halo = buckets ? haloLevel(buckets) : 0;
+        if (halo > 0.06) {
+          const ringW = 5 + halo * 7;
+          const alphas = [0.05, 0.08, 0.12];
+          for (let i = 3; i >= 1; i--) {
+            ctx.beginPath();
+            ctx.arc(node.x, node.y, r + 4 + i * ringW, 0, Math.PI * 2);
+            ctx.fillStyle = P.ink;
+            ctx.globalAlpha = alphas[3 - i] * halo;
+            ctx.fill();
+          }
+          ctx.globalAlpha = dimmed ? 0.28 : 1;
+        }
+      }
 
       // halo for active node
       if (isActive) {
@@ -631,7 +706,7 @@ export default function ActorGraph({
       ctx.strokeRect(v0.x, v0.y, vw * sc, vh * sc);
       ctx.globalAlpha = 1;
     }
-  }, [selectedSlug, focusMode, lang, markers, showMinimap]);
+  }, [selectedSlug, focusMode, lang, markers, markerWindowDays, coverage, hullBy, showMinimap]);
 
   // Redraw on selection/hover changes
   useEffect(() => {

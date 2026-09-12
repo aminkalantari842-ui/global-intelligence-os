@@ -6,7 +6,6 @@ import { useI18n } from "@/i18n/context";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import ActorGraph from "@/components/graph/ActorGraph";
 import type { EdgeMarker } from "@/components/graph/ActorGraph";
@@ -21,9 +20,18 @@ import {
   type ActorScoreRow,
 } from "@/components/graph/metrics";
 import {
+  AiAnalystBox,
+  ChangeFeed,
+  CommandPalette,
+  ComparePanel,
+  CoverageBlock,
+  WatchButton,
+} from "@/components/graph/panels";
+import {
   ArrowLeft,
   Camera,
   Crosshair,
+  GitCompareArrows,
   HelpCircle,
   Layers,
   LogOut,
@@ -31,6 +39,7 @@ import {
   Minus,
   Plus,
   RotateCcw,
+  ScanSearch,
   Search,
   X,
 } from "lucide-react";
@@ -64,6 +73,7 @@ function fmtDate(ms: number) {
 const SHORTCUTS: Array<[string, string]> = [
   ["F", "graph.fitAll"],
   ["E", "graph.exportPng"],
+  ["⌘K", "palette.open"],
   ["+/−", "graph.zoomInOut"],
   ["0", "graph.resetView"],
   ["Esc", "graph.clearSel"],
@@ -326,6 +336,41 @@ function EdgePanel({
   );
 }
 
+/** Per-actor change history (from the append-only change log). */
+function PerActorChanges({ slug }: { slug: string }) {
+  const { t, lang } = useI18n();
+  const changes = useQuery(api.graph.getActorChanges, { slug, limit: 6 });
+  return (
+    <div className="px-4 pb-2">
+      <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+        {t("graph.actorHistory")}
+      </p>
+      <div className="mt-2 space-y-1">
+        {changes === undefined && (
+          <div className="h-8 animate-pulse rounded-md bg-muted/50" />
+        )}
+        {changes?.length === 0 && (
+          <p className="text-[11px] text-muted-foreground">{t("change.empty")}</p>
+        )}
+        {changes?.map((c) => (
+          <div
+            key={c._id}
+            className="flex items-start gap-2 rounded-md border border-border/50 px-2 py-1.5"
+          >
+            <span className="mt-0.5 size-1.5 shrink-0 rounded-full bg-foreground/60" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[11px] leading-4">{c.detail}</span>
+              <span className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                {fmtAgo(c.ts, lang)}
+              </span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ActorPanel({
   actor,
   relations,
@@ -334,6 +379,10 @@ function ActorPanel({
   onClear,
   onFlyTo,
   now,
+  watching,
+  onToggleWatch,
+  onCompare,
+  newChanges,
 }: {
   actor: GraphActor;
   relations: GraphRelation[];
@@ -342,6 +391,10 @@ function ActorPanel({
   onClear: () => void;
   onFlyTo: () => void;
   now: number;
+  watching: boolean;
+  onToggleWatch: (slug: string) => void;
+  onCompare: () => void;
+  newChanges: number;
 }) {
   const { t, lang } = useI18n();
   const connected = relations.filter(
@@ -366,6 +419,16 @@ function ActorPanel({
           <p className="mt-0.5 text-xs text-muted-foreground">{actor.country} · {actor.region}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <WatchButton slug={actor.slug} watching={watching} onToggle={onToggleWatch} />
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            onClick={onCompare}
+            title={t("graph.compare")}
+          >
+            <GitCompareArrows className="size-3.5" />
+          </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -380,6 +443,12 @@ function ActorPanel({
           </Button>
         </div>
       </div>
+
+      {newChanges > 0 && (
+        <p className="mx-4 mt-3 rounded-md border border-border bg-muted/50 px-2.5 py-1.5 text-[11px] text-muted-foreground">
+          {t("graph.newChanges", { count: fmtNum(newChanges, lang) })}
+        </p>
+      )}
 
       <div className="px-4 pt-3">
         <p className="text-xs leading-5 text-muted-foreground">{actor.description}</p>
@@ -440,7 +509,14 @@ function ActorPanel({
         </div>
       </div>
 
+      <div className="space-y-2.5 px-4 pt-4">
+        <CoverageBlock actorSlug={actor.slug} />
+        <AiAnalystBox actor={actor} relations={relations} actorsBySlug={actorsBySlug} />
+      </div>
+
       <Separator className="my-4" />
+
+      <PerActorChanges slug={actor.slug} />
 
       <p className="px-4 pb-2 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
         {t("nav.graph")} ({connected.length})
@@ -488,6 +564,15 @@ export default function Dashboard() {
   const markerData = useQuery(api.graph.getEventMarkers);
   const seed = useMutation(api.graph.seedIfEmpty);
 
+  // ── Phase 2 data ──
+  const watchlist = useQuery(api.graph.getWatchlist);
+  const toggleWatch = useMutation(api.graph.toggleWatch);
+  const lastSeen = useQuery(api.graph.getViewState, { key: "lastSeen" });
+  const setViewState = useMutation(api.graph.setViewState);
+  const changesSince = useQuery(api.graph.getChangesSince, {
+    since: lastSeen ?? 0,
+  });
+
   // Idempotent first-boot seeding, kept out of the render pass.
   const needsSeed = graph !== undefined && graph.actors.length === 0;
   useEffect(() => {
@@ -500,6 +585,12 @@ export default function Dashboard() {
   const [search, setSearch] = useState("");
   const [focusMode, setFocusMode] = useState(true);
   const [helpOpen, setHelpOpen] = useState(false);
+  // ── Phase 2 state ──
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteMode, setPaletteMode] = useState<"jump" | "compare">("jump");
+  const [compareSlug, setCompareSlug] = useState<string | null>(null);
+  const [markerWindowDays, setMarkerWindowDays] = useState(14);
+  const [hullBy, setHullBy] = useState<"region" | "country" | "kind" | null>(null);
 
   const graphRef = useRef<HTMLDivElement & {
     __zoomBy?: (f: number) => void;
@@ -533,6 +624,50 @@ export default function Dashboard() {
   );
 
   const selectedActor = selectedSlug ? actorsBySlug.get(selectedSlug) : undefined;
+  const comparingTo = compareSlug ? actorsBySlug.get(compareSlug) : undefined;
+
+  // ── Phase 2 derived data ──
+  const watchingSet = useMemo(
+    () => new Set((watchlist ?? []).map((w) => w.actorSlug)),
+    [watchlist],
+  );
+
+  // Coverage buckets feed the canvas heat halos — fetched only for watched
+  // and selected actors to keep the reactive subscription bounded.
+  const coverageQueryEnabled = watchingSet.size > 0 || !!selectedSlug;
+  const coverageRows = useQuery(
+    api.graph.getWatchlistCoverage,
+    coverageQueryEnabled
+      ? {
+          slugs: [
+            ...watchingSet,
+            ...(selectedSlug ? [selectedSlug] : []),
+          ],
+        }
+      : "skip",
+  );
+  const coverageMap = useMemo(() => {
+    const m: Record<string, number[]> = {};
+    (coverageRows ?? []).forEach((row) => {
+      m[row.actorSlug] = row.buckets;
+    });
+    return m;
+  }, [coverageRows]);
+
+  const handleToggleWatch = (slug: string) => {
+    void toggleWatch({ actorSlug: slug });
+  };
+
+  // Mark changes as seen after 30s on the dashboard so "new changes" badges
+  // reflect genuine unseen activity, not permanent history.
+  const unseenCount = changesSince?.count ?? 0;
+  useEffect(() => {
+    if (lastSeen === undefined || unseenCount === 0) return;
+    const id = setTimeout(() => {
+      void setViewState({ key: "lastSeen", value: Date.now() });
+    }, 30_000);
+    return () => clearTimeout(id);
+  }, [lastSeen, unseenCount, setViewState]);
 
   const filteredRelations = useMemo(() => {
     const rels = graph?.relations ?? [];
@@ -605,12 +740,25 @@ export default function Dashboard() {
           break;
         case "Escape":
           setHelpOpen(false);
+          setPaletteOpen(false);
           setSelectedSlug(null);
           setSelectedEdge(null);
           break;
         case "?":
           setHelpOpen((v) => !v);
           break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // ⌘K / Ctrl-K opens the command palette (separate effect to read key mods).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -660,6 +808,19 @@ export default function Dashboard() {
               className="h-9 w-64 rounded-md border border-border bg-card pl-8 pr-3 text-xs outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground/40"
             />
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="hidden gap-1.5 text-xs md:inline-flex"
+            onClick={() => {
+              setPaletteMode("jump");
+              setPaletteOpen(true);
+            }}
+            title={`${t("palette.open")} (⌘K)`}
+          >
+            <ScanSearch className="size-3.5" />
+            <kbd className="font-mono text-[10px] text-muted-foreground">⌘K</kbd>
+          </Button>
           <span className="hidden text-xs text-muted-foreground md:inline">
             {user?.email}
           </span>
@@ -671,7 +832,7 @@ export default function Dashboard() {
 
       <div className="flex min-h-0 flex-1">
         {/* Left rail — filters */}
-        <aside className="hidden w-56 shrink-0 flex-col border-r border-border px-4 py-4 lg:flex">
+        <aside className="hidden w-56 shrink-0 flex-col overflow-y-auto border-r border-border px-4 py-4 lg:flex">
           <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
             {t("dash.relationTypes")}
           </p>
@@ -701,6 +862,53 @@ export default function Dashboard() {
                 </button>
               );
             })}
+          </div>
+
+          <Separator className="my-4" />
+
+          {/* Time-scrub window for evidence markers */}
+          <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            {t("graph.timeWindow")}
+          </p>
+          <input
+            type="range"
+            min={1}
+            max={90}
+            value={markerWindowDays}
+            onChange={(e) => setMarkerWindowDays(Number(e.target.value))}
+            className="mt-2 w-full accent-foreground"
+            aria-label={t("graph.timeWindow")}
+          />
+          <div className="mt-0.5 flex items-center justify-between text-[10px] text-muted-foreground">
+            <span>{fmtNum(1, lang)}d</span>
+            <span className="tabular-nums">
+              ≤ {fmtNum(markerWindowDays, lang)} {t("graph.days")}
+            </span>
+            <span>{fmtNum(90, lang)}d</span>
+          </div>
+
+          {/* Cluster hull selector */}
+          <div className="mt-3">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              {t("graph.hulls")}
+            </p>
+            <div className="mt-1.5 flex gap-1">
+              {([null, "region", "country", "kind"] as const).map((h) => (
+                <button
+                  key={String(h)}
+                  onClick={() => setHullBy(h)}
+                  className={`flex-1 rounded-md border px-1 py-1 text-[10px] transition-colors ${
+                    hullBy === h
+                      ? "border-foreground bg-foreground text-background"
+                      : "border-border text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {h === null
+                    ? t("graph.hullsOff")
+                    : t(`graph.hull.${h}`)}
+                </button>
+              ))}
+            </div>
           </div>
 
           <Separator className="my-4" />
@@ -746,6 +954,66 @@ export default function Dashboard() {
               />
             ))}
           </div>
+
+          <Separator className="my-4" />
+
+          {/* Watchlist */}
+          <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            {t("graph.watchlist")}
+          </p>
+          <div className="mt-1.5 space-y-0.5">
+            {watchlist === undefined && (
+              <p className="px-1.5 text-[11px] text-muted-foreground">…</p>
+            )}
+            {watchlist?.length === 0 && (
+              <p className="px-1.5 text-[11px] leading-4 text-muted-foreground">
+                {t("graph.watchlistEmpty")}
+              </p>
+            )}
+            {watchlist?.map((w) => {
+              const a = actorsBySlug.get(w.actorSlug);
+              const fresh = changesSince?.byActor?.[w.actorSlug] ?? 0;
+              return (
+                <div key={w._id} className="flex items-center gap-1">
+                  <button
+                    onClick={() => {
+                      setSelectedSlug(w.actorSlug);
+                      setSelectedEdge(null);
+                      graphRef.current?.__flyTo?.(w.actorSlug);
+                    }}
+                    className="group flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1 text-xs transition-colors hover:bg-muted"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-start group-hover:underline">
+                      {a?.name ?? w.actorSlug}
+                    </span>
+                    {fresh > 0 && (
+                      <span className="shrink-0 rounded-full bg-foreground px-1.5 text-[9px] font-semibold tabular-nums text-background">
+                        {fmtNum(fresh, lang)}
+                      </span>
+                    )}
+                  </button>
+                  <WatchButton
+                    slug={w.actorSlug}
+                    watching
+                    onToggle={handleToggleWatch}
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          <Separator className="my-4" />
+
+          <ChangeFeed
+            compact
+            onSelectActor={(slug) => {
+              if (slug) {
+                setSelectedSlug(slug);
+                setSelectedEdge(null);
+                graphRef.current?.__flyTo?.(slug);
+              }
+            }}
+          />
 
           <Separator className="my-4" />
 
@@ -855,7 +1123,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div ref={graphRef} className="min-h-0 flex-1 p-3">
+          <div ref={graphRef} className="relative min-h-0 flex-1 p-3">
             {graph === undefined ? (
               <div className="flex h-full items-center justify-center rounded-md border border-border/60 bg-muted/30">
                 <div className="text-center">
@@ -888,9 +1156,28 @@ export default function Dashboard() {
                 focusMode={focusMode}
                 kindFilter={kindFilter}
                 markers={markersMap}
+                markerWindowDays={markerWindowDays}
+                coverage={coverageMap}
+                hullBy={hullBy}
               />
             )}
             {helpOpen && <HelpOverlay onClose={() => setHelpOpen(false)} />}
+            <CommandPalette
+              open={paletteOpen}
+              onClose={() => setPaletteOpen(false)}
+              actors={(graph?.actors ?? []).filter(
+                (a) => paletteMode === "jump" || a.slug !== selectedSlug,
+              )}
+              onPick={(slug) => {
+                if (paletteMode === "compare") {
+                  setCompareSlug(slug);
+                } else {
+                  setSelectedSlug(slug);
+                  setSelectedEdge(null);
+                  graphRef.current?.__flyTo?.(slug);
+                }
+              }}
+            />
           </div>
 
           {/* Bottom ticker — latest observed updates */}
@@ -926,6 +1213,14 @@ export default function Dashboard() {
               actorsBySlug={actorsBySlug}
               onClose={() => setSelectedEdge(null)}
             />
+          ) : comparingTo && selectedActor ? (
+            <ComparePanel
+              a={selectedActor}
+              b={comparingTo}
+              relations={graph?.relations ?? []}
+              onClose={() => setCompareSlug(null)}
+              now={now}
+            />
           ) : selectedActor ? (
             <ActorPanel
               actor={selectedActor}
@@ -935,11 +1230,21 @@ export default function Dashboard() {
                 setSelectedEdge(r);
                 setSelectedSlug(null);
               }}
-              onClear={() => setSelectedSlug(null)}
+              onClear={() => {
+                setSelectedSlug(null);
+                setCompareSlug(null);
+              }}
               onFlyTo={() => {
                 if (selectedSlug) graphRef.current?.__flyTo?.(selectedSlug);
               }}
               now={now}
+              watching={watchingSet.has(selectedActor.slug)}
+              onToggleWatch={handleToggleWatch}
+              onCompare={() => {
+                setPaletteMode("compare");
+                setPaletteOpen(true);
+              }}
+              newChanges={changesSince?.byActor?.[selectedActor.slug] ?? 0}
             />
           ) : (
             <div className="flex h-full flex-col px-4 py-4">

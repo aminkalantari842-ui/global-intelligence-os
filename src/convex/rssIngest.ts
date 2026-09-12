@@ -150,7 +150,7 @@ async function refreshAllTanks(
 
       const fresh = feedItems.slice(0, 25);
       for (const item of fresh) {
-        await runMutation(api.thinkTanks.upsertPublication, {
+        const pubId = await runMutation(api.thinkTanks.upsertPublication, {
           thinkTankSlug: tank.slug,
           title: item.title,
           url: item.link,
@@ -160,6 +160,19 @@ async function refreshAllTanks(
           fetchedAt: Date.now(),
         });
         inserted++;
+        // Phase 2: extract deterministic actor mentions from the stored text.
+        if (pubId) {
+          try {
+            await runMutation(api.graph.ingestMentions, {
+              pubId: pubId as never,
+              tankSlug: tank.slug,
+              ts: item.publishedAt,
+              text: `${item.title} ${item.summary}`.slice(0, 2000),
+            });
+          } catch {
+            /* mention extraction must never break ingestion */
+          }
+        }
       }
       // Only mark fetched when we actually got something, so retries aren't starved.
       if (fresh.length > 0) {
