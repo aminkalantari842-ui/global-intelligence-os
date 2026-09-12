@@ -9,16 +9,30 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import ActorGraph from "@/components/graph/ActorGraph";
+import type { EdgeMarker } from "@/components/graph/ActorGraph";
 import type { GraphActor, GraphRelation } from "@/components/graph/types";
 import {
+  computePosition,
+  computeRisk,
+  fmtAgo,
+  fmtNum,
+  topByPosition,
+  topByRisk,
+  type ActorScoreRow,
+} from "@/components/graph/metrics";
+import {
   ArrowLeft,
-  ExternalLink,
+  Camera,
+  Crosshair,
+  HelpCircle,
   Layers,
   LogOut,
+  Maximize2,
   Minus,
   Plus,
   RotateCcw,
   Search,
+  X,
 } from "lucide-react";
 
 const KIND_LABEL: Record<string, string> = {
@@ -45,6 +59,87 @@ function fmtDate(ms: number) {
     month: "short",
     year: "numeric",
   });
+}
+
+const SHORTCUTS: Array<[string, string]> = [
+  ["F", "graph.fitAll"],
+  ["E", "graph.exportPng"],
+  ["+/−", "graph.zoomInOut"],
+  ["0", "graph.resetView"],
+  ["Esc", "graph.clearSel"],
+  ["?", "graph.showHelp"],
+];
+
+function ScoreRow({
+  row,
+  rank,
+  onSelect,
+}: {
+  row: ActorScoreRow;
+  rank: number;
+  onSelect: (slug: string) => void;
+}) {
+  const { lang } = useI18n();
+  return (
+    <button
+      onClick={() => onSelect(row.slug)}
+      className="group flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-xs transition-colors hover:bg-muted"
+    >
+      <span className="w-4 shrink-0 tabular-nums text-[10px] text-muted-foreground">
+        {fmtNum(rank, lang)}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-start group-hover:underline">{row.name}</span>
+      <span className="inline-block h-1 w-14 shrink-0 overflow-hidden rounded-full bg-muted">
+        <span
+          className="block h-full rounded-full bg-foreground/70"
+          style={{ width: `${Math.min(100, Math.max(4, row.value))}%` }}
+        />
+      </span>
+      <span className="w-7 shrink-0 text-end tabular-nums text-[11px] font-medium">
+        {fmtNum(row.value, lang)}
+      </span>
+    </button>
+  );
+}
+
+function HelpOverlay({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
+  return (
+    <div
+      className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-80 rounded-md border border-border bg-card p-4 shadow-sm"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold">{t("graph.shortcuts")}</p>
+          <Button variant="ghost" size="icon" className="size-6" onClick={onClose}>
+            <X className="size-3.5" />
+          </Button>
+        </div>
+        <ul className="mt-3 space-y-1.5">
+          {SHORTCUTS.map(([key, labelKey]) => (
+            <li key={key} className="flex items-center justify-between gap-3 text-[11px]">
+              <span className="text-muted-foreground">{t(labelKey)}</span>
+              <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+                {key}
+              </kbd>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-3 border-t border-border pt-2">
+          <ul className="space-y-1 text-[11px] text-muted-foreground">
+            <li>{t("conf.solidEdge")} — {t("conf.solidEdgeDesc")}</li>
+            <li>{t("conf.dashedEdge")} — {t("conf.dashedEdgeDesc")}</li>
+            <li>{t("conf.fineDashed")} — {t("conf.fineDashedDesc")}</li>
+            <li>{t("conf.outerRing")} — {t("conf.outerRingDesc")}</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function ConfidenceBar({ value }: { value: number }) {
@@ -237,14 +332,18 @@ function ActorPanel({
   actorsBySlug,
   onOpenEdge,
   onClear,
+  onFlyTo,
+  now,
 }: {
   actor: GraphActor;
   relations: GraphRelation[];
   actorsBySlug: Map<string, GraphActor>;
   onOpenEdge: (r: GraphRelation) => void;
   onClear: () => void;
+  onFlyTo: () => void;
+  now: number;
 }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const connected = relations.filter(
     (r) => r.sourceSlug === actor.slug || r.targetSlug === actor.slug,
   );
@@ -253,6 +352,8 @@ function ActorPanel({
         connected.reduce((s, r) => s + r.confidence, 0) / connected.length,
       )
     : 0;
+  const risk = computeRisk(actor, relations, now);
+  const position = computePosition(actor, relations);
 
   return (
     <div className="flex h-full flex-col">
@@ -264,9 +365,20 @@ function ActorPanel({
           <h3 className="mt-1 text-sm font-semibold leading-5">{actor.name}</h3>
           <p className="mt-0.5 text-xs text-muted-foreground">{actor.country} · {actor.region}</p>
         </div>
-        <Button variant="ghost" size="icon" className="size-7 shrink-0" onClick={onClear}>
-          <ArrowLeft className="size-4" />
-        </Button>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7"
+            onClick={onFlyTo}
+            title={t("graph.flyTo")}
+          >
+            <Crosshair className="size-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="size-7" onClick={onClear}>
+            <ArrowLeft className="size-4" />
+          </Button>
+        </div>
       </div>
 
       <div className="px-4 pt-3">
@@ -285,9 +397,47 @@ function ActorPanel({
       </div>
 
       <div className="grid grid-cols-3 gap-3 px-4 pt-4">
-        <Stat label={t("stat.edges")} value={String(connected.length)} />
-        <Stat label={t("edge.confidence")} value={`${meanConfidence}%`} />
-        <Stat label={t("edge.sources")} value={actor.sourceCount >= 1000 ? `${(actor.sourceCount / 1000).toFixed(1)}k` : String(actor.sourceCount)} />
+        <Stat label={t("stat.edges")} value={fmtNum(connected.length, lang)} />
+        <Stat label={t("edge.confidence")} value={`${fmtNum(meanConfidence, lang)}%`} />
+        <Stat label={t("edge.sources")} value={actor.sourceCount >= 1000 ? `${(actor.sourceCount / 1000).toFixed(1)}k` : fmtNum(actor.sourceCount, lang)} />
+      </div>
+
+      <div className="space-y-2.5 px-4 pt-4">
+        <div>
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+            <span>{t("graph.riskScore")}</span>
+            <span className="tabular-nums">{fmtNum(risk.risk, lang)}/{fmtNum(100, lang)}</span>
+          </div>
+          <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-foreground" style={{ width: `${risk.risk}%` }} />
+          </div>
+          <div className="mt-1.5 grid grid-cols-3 gap-2 text-[10px] text-muted-foreground">
+            {(
+              [
+                ["graph.risk.tension", risk.tension],
+                ["graph.risk.contested", risk.contested],
+                ["graph.risk.recency", risk.recency],
+              ] as Array<[string, number]>
+            ).map(([k, v]) => (
+              <div key={k} className="flex items-center justify-between gap-1">
+                <span className="truncate">{t(k)}</span>
+                <span className="tabular-nums">{fmtNum(v, lang)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+            <span>{t("graph.positionScore")}</span>
+            <span className="tabular-nums">{fmtNum(position, lang)}</span>
+          </div>
+          <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-foreground/70"
+              style={{ width: `${Math.min(100, position)}%` }}
+            />
+          </div>
+        </div>
       </div>
 
       <Separator className="my-4" />
@@ -316,6 +466,9 @@ function ActorPanel({
                 <span className="ml-auto text-[10px] text-muted-foreground">
                   {t(STATUS_LABEL[r.status] ?? r.status) ?? r.status}
                 </span>
+                <span className="text-[10px] tabular-nums text-muted-foreground/80">
+                  Δ{fmtAgo(r.updatedAt, lang)}
+                </span>
               </div>
             </button>
           );
@@ -332,6 +485,7 @@ export default function Dashboard() {
 
   const graph = useQuery(api.graph.getGraph);
   const stats = useQuery(api.graph.getStats);
+  const markerData = useQuery(api.graph.getEventMarkers);
   const seed = useMutation(api.graph.seedIfEmpty);
 
   // Idempotent first-boot seeding, kept out of the render pass.
@@ -345,11 +499,33 @@ export default function Dashboard() {
   const [kindFilter, setKindFilter] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [focusMode, setFocusMode] = useState(true);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const graphRef = useRef<HTMLDivElement & {
     __zoomBy?: (f: number) => void;
     __reset?: () => void;
+    __fitAll?: () => void;
+    __flyTo?: (slug: string) => void;
+    __exportPng?: () => void;
   } | null>(null);
+
+  const markersMap = useMemo(() => {
+    const m: Record<string, EdgeMarker> = {};
+    (markerData?.markers ?? []).forEach((mk) => {
+      m[mk.relationId] = { latestTs: mk.latestTs, count14d: mk.count14d, total: mk.total };
+    });
+    return m;
+  }, [markerData]);
+
+  const now = useMemo(() => Date.now(), []);
+  const topRisk = useMemo(
+    () => topByRisk(graph?.actors ?? [], graph?.relations ?? [], lang, now),
+    [graph?.actors, graph?.relations, lang, now],
+  );
+  const topPosition = useMemo(
+    () => topByPosition(graph?.actors ?? [], graph?.relations ?? [], lang),
+    [graph?.actors, graph?.relations, lang],
+  );
 
   const actorsBySlug = useMemo(
     () => new Map((graph?.actors ?? []).map((a) => [a.slug, a])),
@@ -401,6 +577,45 @@ export default function Dashboard() {
       return next;
     });
   };
+
+  // Keyboard shortcuts: F fit · E export · +/− zoom · 0 reset · Esc clear · ? help
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      switch (e.key) {
+        case "f":
+        case "F":
+          graphRef.current?.__fitAll?.();
+          break;
+        case "e":
+        case "E":
+          graphRef.current?.__exportPng?.();
+          break;
+        case "+":
+        case "=":
+          graphRef.current?.__zoomBy?.(1.2);
+          break;
+        case "-":
+          graphRef.current?.__zoomBy?.(0.83);
+          break;
+        case "0":
+          graphRef.current?.__reset?.();
+          break;
+        case "Escape":
+          setHelpOpen(false);
+          setSelectedSlug(null);
+          setSelectedEdge(null);
+          break;
+        case "?":
+          setHelpOpen((v) => !v);
+          break;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const handleSignOut = async () => {
     await signOut();
@@ -491,6 +706,50 @@ export default function Dashboard() {
           <Separator className="my-4" />
 
           <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            {t("graph.topRisk")}
+          </p>
+          <div className="mt-1.5 space-y-0.5">
+            {topRisk.length === 0 && (
+              <p className="px-1.5 text-[11px] text-muted-foreground">…</p>
+            )}
+            {topRisk.map((row, i) => (
+              <ScoreRow
+                key={row.slug}
+                row={row}
+                rank={i + 1}
+                onSelect={(slug) => {
+                  setSelectedSlug(slug);
+                  setSelectedEdge(null);
+                  graphRef.current?.__flyTo?.(slug);
+                }}
+              />
+            ))}
+          </div>
+
+          <p className="mt-4 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            {t("graph.topPosition")}
+          </p>
+          <div className="mt-1.5 space-y-0.5">
+            {topPosition.length === 0 && (
+              <p className="px-1.5 text-[11px] text-muted-foreground">…</p>
+            )}
+            {topPosition.map((row, i) => (
+              <ScoreRow
+                key={row.slug}
+                row={row}
+                rank={i + 1}
+                onSelect={(slug) => {
+                  setSelectedSlug(slug);
+                  setSelectedEdge(null);
+                  graphRef.current?.__flyTo?.(slug);
+                }}
+              />
+            ))}
+          </div>
+
+          <Separator className="my-4" />
+
+          <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
             {t("dash.registryStatus")}
           </p>
           <div className="mt-2 space-y-1.5 text-xs text-muted-foreground">
@@ -499,7 +758,7 @@ export default function Dashboard() {
             </div>
             <p className="text-[11px] leading-4">
               {stats
-                ? `${stats.actorCount} ${t("stat.actors")} · ${stats.edgeCount} ${t("stat.edges")}`
+                ? `${fmtNum(stats.actorCount, lang)} ${t("stat.actors")} · ${fmtNum(stats.edgeCount, lang)} ${t("stat.edges")}`
                 : t("dash.loading")}
             </p>
           </div>
@@ -526,10 +785,10 @@ export default function Dashboard() {
             <div className="flex items-center gap-4 overflow-x-auto">
               {stats && (
                 <>
-                  <Stat label={t("stat.actors")} value={String(stats.actorCount)} />
-                  <Stat label={t("stat.edges")} value={String(stats.edgeCount)} />
-                  <Stat label={t("stat.evidence")} value={String(stats.evidenceCount)} />
-                  <Stat label={t("stat.corroborated")} value={`${stats.corroboratedShare}%`} />
+                  <Stat label={t("stat.actors")} value={fmtNum(stats.actorCount, lang)} />
+                  <Stat label={t("stat.edges")} value={fmtNum(stats.edgeCount, lang)} />
+                  <Stat label={t("stat.evidence")} value={fmtNum(stats.evidenceCount, lang)} />
+                  <Stat label={t("stat.corroborated")} value={`${fmtNum(stats.corroboratedShare, lang)}%`} />
                 </>
               )}
             </div>
@@ -551,6 +810,37 @@ export default function Dashboard() {
                 aria-label={t("dash.zoomOut")}
               >
                 <Minus className="size-4" />
+              </Button>
+              <Separator orientation="vertical" className="mx-1 h-5" />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={() => graphRef.current?.__fitAll?.()}
+                aria-label={t("graph.fitAll")}
+                title={`${t("graph.fitAll")} (F)`}
+              >
+                <Maximize2 className="size-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={() => graphRef.current?.__exportPng?.()}
+                aria-label={t("graph.exportPng")}
+                title={`${t("graph.exportPng")} (E)`}
+              >
+                <Camera className="size-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8"
+                onClick={() => setHelpOpen((v) => !v)}
+                aria-label={t("graph.shortcuts")}
+                title={`${t("graph.shortcuts")} (?)`}
+              >
+                <HelpCircle className="size-4" />
               </Button>
               <Separator orientation="vertical" className="mx-1 h-5" />
               <Button
@@ -597,8 +887,10 @@ export default function Dashboard() {
                 }}
                 focusMode={focusMode}
                 kindFilter={kindFilter}
+                markers={markersMap}
               />
             )}
+            {helpOpen && <HelpOverlay onClose={() => setHelpOpen(false)} />}
           </div>
 
           {/* Bottom ticker — latest observed updates */}
@@ -644,6 +936,10 @@ export default function Dashboard() {
                 setSelectedSlug(null);
               }}
               onClear={() => setSelectedSlug(null)}
+              onFlyTo={() => {
+                if (selectedSlug) graphRef.current?.__flyTo?.(selectedSlug);
+              }}
+              now={now}
             />
           ) : (
             <div className="flex h-full flex-col px-4 py-4">
@@ -688,7 +984,7 @@ export default function Dashboard() {
               </p>
               <p className="mt-2 text-[11px] leading-4 text-muted-foreground">
                 {stats
-                  ? `${stats.activeEdges} ${t("stat.edges")} · ${stats.actorCount} ${t("stat.actors")} · ${stats.sourcesSum.toLocaleString()} ${t("edge.sources")}`
+                  ? `${fmtNum(stats.activeEdges, lang)} ${t("stat.edges")} · ${fmtNum(stats.actorCount, lang)} ${t("stat.actors")} · ${fmtNum(stats.sourcesSum, lang)} ${t("edge.sources")}`
                   : "…"}
               </p>
             </div>

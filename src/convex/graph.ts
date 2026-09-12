@@ -97,6 +97,38 @@ export const getRelationEvents = query({
   },
 });
 
+// Event markers for the graph canvas overlay. One query returns the latest
+// observed event timestamp per relationship plus a 14-day activity flag —
+// deterministic projection of stored evidence, no computed opinion.
+export const getEventMarkers = query({
+  args: {},
+  handler: async (ctx) => {
+    const events = await ctx.db.query("relationEvents").collect();
+    const now = dbNow();
+    const cutoff14d = now - 14 * 86_400_000;
+
+    const byRelation = new Map<string, { latestTs: number; count14d: number; total: number }>();
+    for (const e of events) {
+      const key = String(e.relationId);
+      const cur = byRelation.get(key) ?? { latestTs: 0, count14d: 0, total: 0 };
+      cur.total += 1;
+      if (e.timestamp > cur.latestTs) cur.latestTs = e.timestamp;
+      if (e.timestamp >= cutoff14d) cur.count14d += 1;
+      byRelation.set(key, cur);
+    }
+
+    return {
+      generatedAt: now,
+      markers: Array.from(byRelation.entries()).map(([relationId, m]) => ({
+        relationId,
+        latestTs: m.latestTs,
+        count14d: m.count14d,
+        total: m.total,
+      })),
+    };
+  },
+});
+
 export const getStats = query({
   args: {},
   handler: async (ctx) => {
