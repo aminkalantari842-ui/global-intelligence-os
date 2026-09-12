@@ -18,6 +18,7 @@ import {
   Clock,
   TrendingUp,
   Filter,
+  Languages,
   Layers,
   Star,
 } from "lucide-react";
@@ -87,6 +88,105 @@ function fmtRelative(ts: number) {
   if (hrs < 24) return `${hrs}h`;
   const days = Math.floor(hrs / 24);
   return `${days}d`;
+}
+
+/**
+ * Per-publication FA translation. Calls the server action on first open —
+ * results are permanently cached server-side (SHA-256 keyed), so repeat
+ * views and other users cost zero model calls.
+ */
+function TranslationBlock({
+  title,
+  summary,
+}: {
+  title: string;
+  summary: string;
+}) {
+  const { t } = useI18n();
+  const translate = useAction(api.translations.translatePublication);
+  const [state, setState] = useState<
+    | { status: "idle" }
+    | { status: "loading" }
+    | { status: "error"; message: string }
+    | { status: "done"; titleFa: string; summaryFa: string; cached: boolean }
+  >({ status: "idle" });
+
+  const run = async () => {
+    setState({ status: "loading" });
+    try {
+      const res = await translate({ title, summary: summary || undefined });
+      setState({ status: "done", ...res });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setState({
+        status: "error",
+        message: msg.includes("AI_API_KEY") ? t("ai.noKey") : t("tt.translateError"),
+      });
+    }
+  };
+
+  if (state.status === "idle") {
+    return (
+      <button
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          void run();
+        }}
+        className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-[10px] text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+      >
+        <Languages className="size-3" />
+        {t("tt.translate")}
+      </button>
+    );
+  }
+
+  if (state.status === "loading") {
+    return (
+      <span className="mt-2 inline-flex items-center gap-1.5 text-[10px] text-muted-foreground">
+        <Loader2 className="size-3 animate-spin" />
+        {t("tt.translating")}
+      </span>
+    );
+  }
+
+  if (state.status === "error") {
+    return (
+      <span className="mt-2 inline-flex items-center gap-2 text-[10px] text-muted-foreground">
+        {state.message}
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            void run();
+          }}
+          className="underline underline-offset-2 hover:text-foreground"
+        >
+          {t("tt.translateRetry")}
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <div
+      className="mt-2 rounded-md border-s-2 border-s-foreground/40 bg-muted/40 px-3 py-2"
+      dir="rtl"
+      onClick={(e) => {
+        e.stopPropagation();
+      }}
+    >
+      <p className="text-xs font-medium leading-5">{state.titleFa}</p>
+      {state.summaryFa && (
+        <p className="mt-1 line-clamp-4 text-[11px] leading-5 text-muted-foreground">
+          {state.summaryFa}
+        </p>
+      )}
+      <p className="mt-1 text-[9px] text-muted-foreground/70">
+        {t("tt.translateDisclaimer")}
+      </p>
+    </div>
+  );
 }
 
 export default function ThinkTanks() {
@@ -634,6 +734,12 @@ export default function ThinkTanks() {
                         <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
                           {pub.summary}
                         </p>
+                      )}
+                      {lang === "fa" && (
+                        <TranslationBlock
+                          title={pub.title}
+                          summary={pub.summary}
+                        />
                       )}
                     </div>
                     <ExternalLink className="mt-0.5 size-4 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-foreground" />

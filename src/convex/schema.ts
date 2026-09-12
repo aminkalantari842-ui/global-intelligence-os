@@ -217,6 +217,18 @@ const schema = defineSchema(
     })
       .index("by_user", ["userId"])
       .index("by_user_key", ["userId", "key"]),
+
+    // ─── Translation Cache (FA) ───────────────────────────────────────────
+    // One immutable row per unique title+body pair, keyed by SHA-256.
+    // Translations are content artifacts with provenance (model recorded);
+    // the LLM never touches intelligence data, only language conversion.
+    translations: defineTable({
+      hash: v.string(),
+      titleFa: v.string(),
+      summaryFa: v.string(),
+      model: v.string(),
+      createdAt: v.number(),
+    }).index("by_hash", ["hash"]),
   },
   {
     schemaValidation: false,
