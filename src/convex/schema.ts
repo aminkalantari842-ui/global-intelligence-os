@@ -125,10 +125,33 @@ const schema = defineSchema(
       publishedAt: v.number(),
       topics: v.array(v.string()),
       fetchedAt: v.number(),
+      // Persian topic-column assignment from the deterministic classifier
+      // (security / military / economy / ...). null until classified.
+      topicFa: v.optional(v.string()),
     })
       .index("by_thinktank", ["thinkTankSlug"])
       .index("by_published", ["publishedAt"])
-      .index("by_url", ["url"]),
+      .index("by_url", ["url"])
+      .index("by_topic", ["topicFa", "publishedAt"]),
+
+    // ─── Full Article Content (extracted + translated) ─────────────────────
+    // One row per publication, keyed by publication id. English extraction
+    // happens via reader-mode fetch; the Persian full text is cached so the
+    // in-app reader tab opens instantly after first extraction (rule 9).
+    articleContent: defineTable({
+      pubId: v.id("publications"),
+      url: v.string(),
+      textEn: v.string(), // extracted source text (reader mode)
+      titleFa: v.string(),
+      textFa: v.string(), // full Persian translation
+      model: v.string(), // translation model, provenance (rule 5)
+      status: v.union(
+        v.literal("READY"),
+        v.literal("FAILED"), // extraction blocked — UI falls back to summary
+      ),
+      chars: v.number(),
+      createdAt: v.number(),
+    }).index("by_pub", ["pubId"]),
 
     // ─── Relation Evidence ─────────────────────────────────────────────────
     // Timeline events attached to a relationship. Every event carries typed

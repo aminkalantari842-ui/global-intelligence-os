@@ -1,5 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { classifyTopicFa } from "./articles";
 
 export const listEnabled = query({
   args: {},
@@ -226,16 +227,20 @@ export const ingestBatch = mutation({
         .unique();
       let id: any;
       if (existing) {
-        await ctx.db.patch(existing._id, {
+        const patch: Record<string, unknown> = {
           title: item.title,
           summary: item.summary,
           fetchedAt,
-        });
+        };
+        // Classify on first sight only — topic assignment is immutable once set.
+        if (!existing.topicFa) patch.topicFa = classifyTopicFa(item.title, item.summary);
+        await ctx.db.patch(existing._id, patch);
         id = existing._id;
       } else {
         id = await ctx.db.insert("publications", {
           thinkTankSlug: tankSlug,
           ...item,
+          topicFa: classifyTopicFa(item.title, item.summary),
           fetchedAt,
         });
         inserted++;

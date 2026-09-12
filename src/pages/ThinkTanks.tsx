@@ -6,6 +6,7 @@ import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import TopicBoard from "@/components/board/TopicBoard";
 import {
   ExternalLink,
   RefreshCw,
@@ -227,6 +228,8 @@ export default function ThinkTanks() {
   const [batchTotal, setBatchTotal] = useState(0);
   const [batchDone, setBatchDone] = useState(0);
   const [batchKey, setBatchKey] = useState(0); // bump → TranslationBlocks auto-open
+  // "board" = Persian topic columns · "list" = classic publication list
+  const [view, setView] = useState<"board" | "list">("board");
 
   const syncRegistry = useMutation(api.thinkTankSeed.syncRegistry);
 
@@ -328,7 +331,28 @@ export default function ThinkTanks() {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6">
+      <main className="mx-auto flex h-[calc(100vh-3.5rem)] w-full max-w-[1600px] flex-col px-4 py-4 sm:px-6">
+        {/* View switcher: topic board vs classic list */}
+        <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
+          <div className="flex rounded-md border border-border p-0.5">
+            {(["board", "list"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
+                  view === v
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {v === "board" ? t("tt.viewBoard") : t("tt.viewList")}
+              </button>
+            ))}
+          </div>
+          <p className="hidden text-[10px] text-muted-foreground sm:block">
+            {t("board.hint")}
+          </p>
+        </div>
         {/* Page header */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -400,6 +424,10 @@ export default function ThinkTanks() {
           </div>
         )}
 
+        {view === "board" ? (
+          <TopicBoard />
+        ) : (
+        <>
         {/* Stats strip */}
         {stats && (
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -865,6 +893,8 @@ export default function ThinkTanks() {
             })}
           </div>
         </div>
+        </>
+        )}
       </main>
     </div>
   );

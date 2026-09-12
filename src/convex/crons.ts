@@ -8,6 +8,7 @@ const crons = cronJobs();
 const cronRef: any = internal.rssIngest._cronRefresh;
 const compactRef: any = internal.graph.compactChangeLog;
 const backfillRef: any = internal.translations.backfill;
+const articlesRef: any = internal.articles.autoTranslateBatch;
 crons.interval(
   "Refresh think tank RSS feeds",
   { hours: 6 },
@@ -27,6 +28,15 @@ crons.interval(
   "Backfill FA translations",
   { hours: 2 },
   backfillRef,
+);
+
+// Hourly: classify recent items into topic columns + extract & translate the
+// newest full articles so the Persian board is ready before users open it.
+crons.hourly(
+  "Auto-translate newest articles",
+  { minuteUTC: 15 },
+  articlesRef,
+  { limit: 6 },
 );
 
 export default crons;

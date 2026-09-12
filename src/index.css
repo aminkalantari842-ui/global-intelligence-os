@@ -112,12 +112,25 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+@theme inline {
+  --font-sans: "Vazirmatn", ui-sans-serif, system-ui, sans-serif;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
   body {
     @apply bg-background text-foreground;
+    font-family: "Vazirmatn", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-feature-settings: "ss01"; /* better Persian digit shaping */
+  }
+  /* All Persian/Farsi text renders in Vazirmatn, including inside latin
+     layouts — language of the glyphs decides, not the page direction. */
+  :lang(fa),
+  [lang="fa"],
+  [dir="rtl"] {
+    font-family: "Vazirmatn", ui-sans-serif, system-ui, sans-serif;
   }
   /* RTL support */
   [dir="rtl"] {
