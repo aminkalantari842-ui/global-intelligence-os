@@ -426,6 +426,16 @@ export default function Dashboard() {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <Link to="/thinktanks">
+            <Button variant="ghost" size="sm" className="hidden text-xs sm:inline-flex">
+              {t("nav.thinktanks")}
+            </Button>
+          </Link>
+          <Link to="/analyst">
+            <Button variant="ghost" size="sm" className="hidden text-xs sm:inline-flex">
+              {t("nav.analyst")}
+            </Button>
+          </Link>
           <div className="relative hidden sm:block">
             <Search className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
             <input

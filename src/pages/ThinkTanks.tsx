@@ -288,7 +288,7 @@ export default function ThinkTanks() {
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 {stats.lastRefresh > 0
-                  ? `${fmtRelative(stats.lastRefresh)} ${t("tt.never") === "هرگز" ? "" : "ago"}`
+                  ? `${fmtRelative(stats.lastRefresh)} ${t("tt.ago")}`
                   : t("tt.never")}
               </p>
             </div>
