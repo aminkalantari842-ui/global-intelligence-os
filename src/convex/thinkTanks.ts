@@ -194,3 +194,95 @@ export const upsertPublication = mutation({
     return await ctx.db.insert("publications", args);
   },
 });
+
+/**
+ * Batch ingestion: one mutation per tank per refresh instead of one per
+ * publication. Upserts every item, runs deterministic actor-mention
+ * extraction inline, and updates lastFetched — a ~50× reduction in
+ * function invocations on the 2-hour cron.
+ */
+export const ingestBatch = mutation({
+  args: {
+    tankSlug: v.string(),
+    items: v.array(
+      v.object({
+        title: v.string(),
+        url: v.string(),
+        summary: v.string(),
+        publishedAt: v.number(),
+        topics: v.array(v.string()),
+      }),
+    ),
+    fetchedAt: v.number(),
+  },
+  handler: async (ctx, { tankSlug, items, fetchedAt }) => {
+    const pubIds: Array<{ id: any; text: string; ts: number }> = [];
+    let inserted = 0;
+
+    for (const item of items) {
+      const existing = await ctx.db
+        .query("publications")
+        .withIndex("by_url", (q) => q.eq("url", item.url))
+        .unique();
+      let id: any;
+      if (existing) {
+        await ctx.db.patch(existing._id, {
+          title: item.title,
+          summary: item.summary,
+          fetchedAt,
+        });
+        id = existing._id;
+      } else {
+        id = await ctx.db.insert("publications", {
+          thinkTankSlug: tankSlug,
+          ...item,
+          fetchedAt,
+        });
+        inserted++;
+      }
+      pubIds.push({ id, text: `${item.title} ${item.summary}`.slice(0, 2000), ts: item.publishedAt });
+    }
+
+    // Keep throttle metadata fresh only when the feed yielded items.
+    if (items.length > 0) {
+      const tank = await ctx.db
+        .query("thinkTanks")
+        .withIndex("by_slug", (q) => q.eq("slug", tankSlug))
+        .unique();
+      if (tank) await ctx.db.patch(tank._id, { lastFetched: fetchedAt });
+    }
+
+    // Inline deterministic mention extraction (same logic as graph.ingestMentions).
+    let matched = 0;
+    if (pubIds.length > 0) {
+      const actors = await ctx.db.query("actors").collect();
+      for (const { id, text, ts } of pubIds) {
+        const hay = text.toLowerCase();
+        const already = new Set(
+          (
+            await ctx.db
+              .query("actorMentions")
+              .withIndex("by_pub", (q) => q.eq("pubId", id))
+              .collect()
+          ).map((m) => m.actorSlug),
+        );
+        for (const actor of actors) {
+          if (already.has(actor.slug)) continue;
+          const needles = [actor.name.toLowerCase(), ...actor.aliases.map((a) => a.toLowerCase())]
+            .filter((n) => n.length >= 3);
+          if (needles.some((n) => hay.includes(n))) {
+            await ctx.db.insert("actorMentions", {
+              actorSlug: actor.slug,
+              pubId: id,
+              tankSlug,
+              ts,
+            });
+            matched++;
+          }
+        }
+      }
+    }
+
+    return { inserted, matched, total: items.length };
+  },
+});

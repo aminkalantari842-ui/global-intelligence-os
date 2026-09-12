@@ -9,7 +9,7 @@ const cronRef: any = internal.rssIngest._cronRefresh;
 const compactRef: any = internal.graph.compactChangeLog;
 crons.interval(
   "Refresh think tank RSS feeds",
-  { hours: 2 },
+  { hours: 6 },
   cronRef,
 );
 

@@ -149,34 +149,21 @@ async function refreshAllTanks(
       }
 
       const fresh = feedItems.slice(0, 25);
-      for (const item of fresh) {
-        const pubId = await runMutation(api.thinkTanks.upsertPublication, {
-          thinkTankSlug: tank.slug,
-          title: item.title,
-          url: item.link,
-          summary: item.summary,
-          publishedAt: item.publishedAt,
-          topics: item.topics,
-          fetchedAt: Date.now(),
-        });
-        inserted++;
-        // Phase 2: extract deterministic actor mentions from the stored text.
-        if (pubId) {
-          try {
-            await runMutation(api.graph.ingestMentions, {
-              pubId: pubId as never,
-              tankSlug: tank.slug,
-              ts: item.publishedAt,
-              text: `${item.title} ${item.summary}`.slice(0, 2000),
-            });
-          } catch {
-            /* mention extraction must never break ingestion */
-          }
-        }
-      }
-      // Only mark fetched when we actually got something, so retries aren't starved.
       if (fresh.length > 0) {
-        await runMutation(api.thinkTanks.updateFetched, { slug: tank.slug, ts: Date.now() });
+        // One batch mutation per tank: upserts + mention extraction +
+        // lastFetched update in a single function call (usage-optimized).
+        const res = (await runMutation(api.thinkTanks.ingestBatch, {
+          tankSlug: tank.slug,
+          items: fresh.map((item) => ({
+            title: item.title,
+            url: item.link,
+            summary: item.summary,
+            publishedAt: item.publishedAt,
+            topics: item.topics,
+          })),
+          fetchedAt: Date.now(),
+        })) as { inserted?: number } | null;
+        inserted += res?.inserted ?? 0;
       }
       return { slug: tank.slug, name: tank.name, ok: fresh.length > 0, items: fresh.length, source: fresh.length > 0 ? source : "none" };
     } catch {
