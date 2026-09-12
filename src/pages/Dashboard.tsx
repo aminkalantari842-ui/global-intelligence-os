@@ -25,22 +25,28 @@ import {
   CommandPalette,
   ComparePanel,
   CoverageBlock,
+  GroupPanel,
   WatchButton,
 } from "@/components/graph/panels";
 import {
   ArrowLeft,
   Camera,
   Crosshair,
+  Globe2,
   GitCompareArrows,
   HelpCircle,
+  Lasso,
   Layers,
   LogOut,
   Maximize2,
   Minus,
+  Pause,
+  Play,
   Plus,
   RotateCcw,
   ScanSearch,
   Search,
+  Share2,
   X,
 } from "lucide-react";
 
@@ -591,6 +597,14 @@ export default function Dashboard() {
   const [compareSlug, setCompareSlug] = useState<string | null>(null);
   const [markerWindowDays, setMarkerWindowDays] = useState(14);
   const [hullBy, setHullBy] = useState<"region" | "country" | "kind" | null>(null);
+  // ── Phase 3 state ──
+  const [layout, setLayout] = useState<"force" | "geo">("force");
+  const [bundling, setBundling] = useState(false);
+  const [lassoEnabled, setLassoEnabled] = useState(false);
+  const [lassoSlugs, setLassoSlugs] = useState<Set<string>>(new Set());
+  const [playing, setPlaying] = useState(false);
+  const [playbackTs, setPlaybackTs] = useState<number | null>(null);
+  const [playSpeed, setPlaySpeed] = useState(1);
 
   const graphRef = useRef<HTMLDivElement & {
     __zoomBy?: (f: number) => void;
@@ -625,6 +639,50 @@ export default function Dashboard() {
 
   const selectedActor = selectedSlug ? actorsBySlug.get(selectedSlug) : undefined;
   const comparingTo = compareSlug ? actorsBySlug.get(compareSlug) : undefined;
+
+  // ── Phase 3: temporal playback range + animation loop ──
+  const sinceRange = useMemo(() => {
+    const times = (graph?.relations ?? []).map((r) => r.since).filter((t) => t > 0);
+    if (times.length === 0) return null;
+    return { min: Math.min(...times), max: Math.max(...times) };
+  }, [graph?.relations]);
+
+  useEffect(() => {
+    if (!playing || !sinceRange) return;
+    let raf = 0;
+    let last = performance.now();
+    let lastPush = 0;
+    let ts = playbackTs ?? sinceRange.min;
+    const span = sinceRange.max - sinceRange.min;
+    const tick = (t: number) => {
+      const dt = t - last;
+      last = t;
+      ts += dt * playSpeed * (span / 60_000); // full sweep ≈ 60s at 1×
+      if (ts >= sinceRange.max) {
+        setPlaybackTs(sinceRange.max);
+        setPlaying(false);
+        return;
+      }
+      // Push at ~12fps — the graph rebuilds on edge-set changes only.
+      if (t - lastPush > 80) {
+        lastPush = t;
+        setPlaybackTs(ts);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, sinceRange, playSpeed]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Day-quantized playback value for the canvas: rebuilds only fire when the
+  // visible edge set can actually change, not on every animation frame.
+  const graphPlaybackTs = useMemo(
+    () =>
+      playbackTs === null
+        ? null
+        : Math.round(playbackTs / 86_400_000) * 86_400_000,
+    [playbackTs],
+  );
 
   // ── Phase 2 derived data ──
   const watchingSet = useMemo(
@@ -741,6 +799,7 @@ export default function Dashboard() {
         case "Escape":
           setHelpOpen(false);
           setPaletteOpen(false);
+          setLassoSlugs(new Set());
           setSelectedSlug(null);
           setSelectedEdge(null);
           break;
@@ -1120,8 +1179,98 @@ export default function Dashboard() {
                 <Layers className="size-3.5" />
                 {t("dash.focus")}
               </Button>
+              <Button
+                variant={lassoEnabled ? "default" : "outline"}
+                size="icon"
+                className="size-8"
+                onClick={() => {
+                  setLassoEnabled((v) => !v);
+                  if (lassoEnabled) setLassoSlugs(new Set());
+                }}
+                aria-label={t("graph.lasso")}
+                title={t("graph.lasso")}
+              >
+                <Lasso className="size-4" />
+              </Button>
+              <Button
+                variant={layout === "geo" ? "default" : "outline"}
+                size="icon"
+                className="size-8"
+                onClick={() => setLayout((l) => (l === "geo" ? "force" : "geo"))}
+                aria-label={t("graph.layoutGeo")}
+                title={layout === "geo" ? t("graph.layoutForce") : t("graph.layoutGeo")}
+              >
+                <Globe2 className="size-4" />
+              </Button>
+              <Button
+                variant={bundling ? "default" : "outline"}
+                size="icon"
+                className="size-8"
+                onClick={() => setBundling((b) => !b)}
+                aria-label={t("graph.bundling")}
+                title={t("graph.bundling")}
+              >
+                <Share2 className="size-4" />
+              </Button>
             </div>
           </div>
+
+          {/* Temporal playback bar */}
+          {sinceRange && (
+            <div className="flex h-10 shrink-0 items-center gap-3 border-b border-border px-4">
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-7"
+                onClick={() => {
+                  if (playing) {
+                    setPlaying(false);
+                  } else {
+                    if (playbackTs === null || playbackTs >= sinceRange.max) {
+                      setPlaybackTs(sinceRange.min);
+                    }
+                    setPlaying(true);
+                  }
+                }}
+                aria-label={t("graph.play")}
+              >
+                {playing ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
+              </Button>
+              <input
+                type="range"
+                min={sinceRange.min}
+                max={sinceRange.max}
+                step={(sinceRange.max - sinceRange.min) / 400 || 1}
+                value={playbackTs ?? sinceRange.max}
+                onChange={(e) => {
+                  setPlaying(false);
+                  setPlaybackTs(Number(e.target.value));
+                }}
+                className="min-w-0 flex-1 accent-foreground"
+                aria-label={t("graph.timeline")}
+              />
+              <span className="w-24 shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                {playbackTs === null
+                  ? t("graph.timelineAll")
+                  : fmtDate(playbackTs)}
+              </span>
+              <div className="flex shrink-0 gap-0.5">
+                {[1, 4, 16].map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setPlaySpeed(s)}
+                    className={`rounded border px-1.5 py-0.5 text-[10px] tabular-nums transition-colors ${
+                      playSpeed === s
+                        ? "border-foreground bg-foreground text-background"
+                        : "border-border text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {fmtNum(s, lang)}×
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div ref={graphRef} className="relative min-h-0 flex-1 p-3">
             {graph === undefined ? (
@@ -1159,8 +1308,31 @@ export default function Dashboard() {
                 markerWindowDays={markerWindowDays}
                 coverage={coverageMap}
                 hullBy={hullBy}
+                playbackTs={graphPlaybackTs}
+                layout={layout}
+                bundling={bundling}
+                lassoEnabled={lassoEnabled}
+                onLassoSelect={(slugs) => setLassoSlugs(slugs)}
               />
             )}
+            {/* Lasso group analysis panel */}
+            <GroupPanel
+              slugs={lassoSlugs}
+              actorsBySlug={actorsBySlug}
+              relations={graph?.relations ?? []}
+              onClear={() => setLassoSlugs(new Set())}
+              onFocusOne={(slug) => {
+                setSelectedSlug(slug);
+                setSelectedEdge(null);
+                graphRef.current?.__flyTo?.(slug);
+              }}
+              onWatchAll={() => {
+                lassoSlugs.forEach((slug) => {
+                  if (!watchingSet.has(slug)) void toggleWatch({ actorSlug: slug });
+                });
+              }}
+              onClose={() => setLassoSlugs(new Set())}
+            />
             {helpOpen && <HelpOverlay onClose={() => setHelpOpen(false)} />}
             <CommandPalette
               open={paletteOpen}

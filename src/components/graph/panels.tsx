@@ -15,6 +15,7 @@ import {
   fmtAgo,
   fmtNum,
 } from "./metrics";
+import { buildIndex } from "./semantic";
 import type { GraphActor, GraphRelation } from "./types";
 import {
   ArrowUpRight,
@@ -384,18 +385,21 @@ export function CommandPalette({
   const [idx, setIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // TF-IDF vector index over actor metadata — deterministic ranking, no LLM.
+  const index = useMemo(() => buildIndex(actors), [actors]);
+
   const results = useMemo(() => {
-    const query = q.trim().toLowerCase();
-    const list = actors.map((a) => ({
-      actor: a,
-      label: actorDisplayName(a, lang),
-      hay: `${a.name} ${a.aliases.join(" ")} ${a.country}`.toLowerCase(),
-    }));
-    if (!query) return list.slice(0, 8);
-    return list
-      .filter((r) => r.hay.includes(query))
-      .slice(0, 8);
-  }, [actors, q, lang]);
+    const bySlug = new Map(actors.map((a) => [a.slug, a]));
+    const query = q.trim();
+    if (!query) {
+      return actors.slice(0, 8).map((a) => ({ actor: a, label: actorDisplayName(a, lang) }));
+    }
+    return index
+      .search(query, 8)
+      .map((r) => bySlug.get(r.slug))
+      .filter((a): a is GraphActor => !!a)
+      .map((a) => ({ actor: a, label: actorDisplayName(a, lang) }));
+  }, [actors, q, lang, index]);
 
   useEffect(() => {
     if (open) {
@@ -540,7 +544,151 @@ export function ChangeFeed({
   );
 }
 
-// ─── Watchlist button (bell toggle) ─────────────────────────────────────────
+// ─── Group panel (lasso / multi-select analysis) ────────────────────────────
+
+export interface GroupStats {
+  count: number;
+  internalEdges: number;
+  externalEdges: number;
+  meanConfidence: number;
+  meanWeight: number;
+  riskMean: number;
+  contestedEdges: number;
+}
+
+export function computeGroupStats(
+  slugs: Set<string>,
+  relations: GraphRelation[],
+  now: number,
+): GroupStats {
+  let internalEdges = 0;
+  let externalEdges = 0;
+  let confSum = 0;
+  let weightSum = 0;
+  let contestedEdges = 0;
+  for (const r of relations) {
+    const sIn = slugs.has(r.sourceSlug);
+    const tIn = slugs.has(r.targetSlug);
+    if (sIn && tIn) {
+      internalEdges++;
+      confSum += r.confidence;
+      weightSum += r.weight;
+      if (r.status === "DISPUTED") contestedEdges++;
+    } else if (sIn || tIn) {
+      externalEdges++;
+    }
+  }
+  const riskMean =
+    slugs.size === 0
+      ? 0
+      : Math.round(
+          [...slugs].reduce(
+            (s, slug) => s + computeRisk({ slug } as GraphActor, relations, now).risk,
+            0,
+          ) / slugs.size,
+        );
+  return {
+    count: slugs.size,
+    internalEdges,
+    externalEdges,
+    meanConfidence: internalEdges ? Math.round(confSum / internalEdges) : 0,
+    meanWeight: internalEdges ? Math.round(weightSum / internalEdges) : 0,
+    riskMean,
+    contestedEdges,
+  };
+}
+
+export function GroupPanel({
+  slugs,
+  actorsBySlug,
+  relations,
+  onClear,
+  onFocusOne,
+  onWatchAll,
+  onClose,
+}: {
+  slugs: Set<string>;
+  actorsBySlug: Map<string, GraphActor>;
+  relations: GraphRelation[];
+  onClear: () => void;
+  onFocusOne: (slug: string) => void;
+  onWatchAll: () => void;
+  onClose: () => void;
+}) {
+  const { t, lang } = useI18n();
+  const stats = useMemo(
+    () => computeGroupStats(slugs, relations, Date.now()),
+    [slugs, relations],
+  );
+
+  if (slugs.size === 0) return null;
+
+  const rows: Array<[string, number]> = [
+    [t("group.internal"), stats.internalEdges],
+    [t("group.external"), stats.externalEdges],
+    [t("edge.confidence"), stats.meanConfidence],
+    [t("group.meanIntensity"), stats.meanWeight],
+    [t("graph.riskScore"), stats.riskMean],
+    [t("status.DISPUTED"), stats.contestedEdges],
+  ];
+
+  return (
+    <div className="absolute bottom-3 start-3 z-20 w-72 rounded-md border border-border bg-card/95 p-3 shadow-sm backdrop-blur">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          {t("group.title", { count: fmtNum(slugs.size, lang) })}
+        </p>
+        <div className="flex items-center gap-0.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 px-1.5 text-[10px]"
+            onClick={onWatchAll}
+          >
+            <Bell className="me-1 size-3" />
+            {t("group.watchAll")}
+          </Button>
+          <Button variant="ghost" size="icon" className="size-6" onClick={onClose}>
+            <X className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {[...slugs].map((s) => {
+          const a = actorsBySlug.get(s);
+          return (
+            <button
+              key={s}
+              onClick={() => onFocusOne(s)}
+              className="rounded-full border border-border px-2 py-0.5 text-[10px] transition-colors hover:bg-muted"
+            >
+              {a ? actorDisplayName(a, lang) : s}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-1.5 border-t border-border/60 pt-2">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex items-center justify-between gap-2">
+            <span className="truncate text-[10px] text-muted-foreground">{label}</span>
+            <span className="text-[11px] font-medium tabular-nums">
+              {fmtNum(value, lang)}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[9px] leading-3 text-muted-foreground">
+        {t("group.hint")}
+      </p>
+      <button
+        onClick={onClear}
+        className="mt-1 text-[10px] text-muted-foreground underline-offset-2 hover:underline"
+      >
+        {t("group.clear")}
+      </button>
+    </div>
+  );
+}
 
 export function WatchButton({
   slug,

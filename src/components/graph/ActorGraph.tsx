@@ -10,6 +10,7 @@ import {
   groupByField,
   haloLevel,
 } from "./metrics";
+import { geoLayout, worldPolygons, pointInPolygon } from "./geo";
 import type { GraphActor, GraphRelation } from "./types";
 
 export interface ActorNode extends d3.SimulationNodeDatum {
@@ -69,6 +70,15 @@ interface ActorGraphProps {
   coverage?: Record<string, number[]>;
   /** Cluster hull grouping field; null disables hulls. */
   hullBy?: "region" | "country" | "kind" | null;
+  /** Temporal playback: show only evidence that existed at this epoch ms. */
+  playbackTs?: number | null;
+  /** Node placement: force-directed or geographic reference layout. */
+  layout?: "force" | "geo";
+  /** Bundle inter-regional edges into shared corridors. */
+  bundling?: boolean;
+  /** Lasso selection mode (drag on empty canvas to select a group). */
+  lassoEnabled?: boolean;
+  onLassoSelect?: (slugs: Set<string>) => void;
 }
 
 const KIND_RADIUS: Record<string, number> = {
@@ -178,6 +188,11 @@ export default function ActorGraph({
   markerWindowDays = 14,
   coverage,
   hullBy = null,
+  playbackTs = null,
+  layout = "force",
+  bundling = false,
+  lassoEnabled = false,
+  onLassoSelect,
 }: ActorGraphProps) {
   const { t, lang } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -196,6 +211,11 @@ export default function ActorGraph({
   const paletteRef = useRef<Palette>(resolvePalette());
   const flyAnimRef = useRef<number>(0);
   const minimapDragRef = useRef(false);
+  const geoPosRef = useRef<Map<string, { x: number; y: number }> | null>(null);
+  const lassoRef = useRef<{ active: boolean; pts: Array<{ x: number; y: number }> }>({
+    active: false,
+    pts: [],
+  });
   const [showMinimap, setShowMinimap] = useState(true);
   const [tooltip, setTooltip] = useState<TooltipState | null>(null);
 
@@ -213,7 +233,20 @@ export default function ActorGraph({
     () => {
       const prev = new Map(nodesRef.current.map((n) => [n.id, n]));
 
-      const nextNodes: ActorNode[] = actors
+      // Temporal playback: show only evidence that existed at playbackTs.
+      // Edges enter at their first evidence date (since); actors appear when
+      // first touched by an edge. Deterministic replay of the timeline.
+      const pb = playbackTs;
+      const timeRelations =
+        pb === null ? filteredRelations : filteredRelations.filter((r) => r.since <= pb);
+      const liveSlugs = new Set<string>();
+      for (const r of timeRelations) {
+        liveSlugs.add(r.sourceSlug);
+        liveSlugs.add(r.targetSlug);
+      }
+      const visibleActors = pb === null ? actors : actors.filter((a) => liveSlugs.has(a.slug));
+
+      const nextNodes: ActorNode[] = visibleActors
         .map((a) => {
           const prevNode = prev.get(a.slug);
           return {
@@ -239,14 +272,38 @@ export default function ActorGraph({
         pairCount.set(key, (pairCount.get(key) ?? 0) + 1);
       }
 
-      const nextLinks: RelationLink[] = filteredRelations
+      // Regional bundling: same-region edges keep their fan; inter-regional
+      // edges sharing a region-pair corridor get a shared offset so long-
+      // distance ties read as corridors instead of spaghetti.
+      const bundleCount = new Map<string, number>();
+      const bundleSeen = new Map<string, number>();
+      if (bundling) {
+        for (const r of timeRelations) {
+          const s = byId.get(r.sourceSlug);
+          const t = byId.get(r.targetSlug);
+          if (!s || !t) continue;
+          const bk = s.actor.region === t.actor.region ? `R:${s.actor.region}` : "GLOBAL";
+          bundleCount.set(bk, (bundleCount.get(bk) ?? 0) + 1);
+        }
+      }
+
+      const nextLinks: RelationLink[] = timeRelations
         .filter((r) => byId.has(r.sourceSlug) && byId.has(r.targetSlug))
         .map((r) => {
           const key = pairKey(r.sourceSlug, r.targetSlug);
           const n = pairCount.get(key) ?? 1;
           const i = pairSeen.get(key) ?? 0;
           pairSeen.set(key, i + 1);
-          const curvature = n === 1 ? 0 : (i - (n - 1) / 2) * 0.16;
+          let curvature = n === 1 ? 0 : (i - (n - 1) / 2) * 0.16;
+          if (bundling) {
+            const s = byId.get(r.sourceSlug)!;
+            const t = byId.get(r.targetSlug)!;
+            const bk = s.actor.region === t.actor.region ? `R:${s.actor.region}` : "GLOBAL";
+            const total = bundleCount.get(bk) ?? 1;
+            const bi = bundleSeen.get(bk) ?? 0;
+            bundleSeen.set(bk, bi + 1);
+            curvature += (bi - (total - 1) / 2) * 0.07;
+          }
           return {
             source: byId.get(r.sourceSlug)!,
             target: byId.get(r.targetSlug)!,
@@ -257,6 +314,29 @@ export default function ActorGraph({
 
       nodesRef.current = nextNodes;
       linksRef.current = nextLinks;
+
+      // Geographic layout pins every node to its projected seat-of-power.
+      if (layout === "geo") {
+        const pos = geoLayout(visibleActors);
+        geoPosRef.current = pos;
+        for (const n of nextNodes) {
+          const p = pos.get(n.id);
+          if (p) {
+            n.x = p.x;
+            n.y = p.y;
+            n.fx = p.x;
+            n.fy = p.y;
+          }
+        }
+      } else {
+        geoPosRef.current = null;
+        for (const n of nextNodes) {
+          if (n.fx !== undefined) {
+            n.fx = undefined;
+            n.fy = undefined;
+          }
+        }
+      }
 
       const sim = d3
         .forceSimulation<ActorNode, RelationLink>(nextNodes)
@@ -283,7 +363,7 @@ export default function ActorGraph({
       simulationRef.current = sim;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [actors, filteredRelations],
+    [actors, filteredRelations, playbackTs, layout, bundling],
   );
 
   // ── Rendering ───────────────────────────────────────────────────────────
@@ -333,6 +413,39 @@ export default function ActorGraph({
     }
     ctx.stroke();
     ctx.globalAlpha = 1;
+
+    // ── Geographic reference layer: stylized coastlines + graticule ──
+    if (layout === "geo") {
+      const polys = worldPolygons();
+      ctx.strokeStyle = P.edge;
+      ctx.fillStyle = P.grid;
+      ctx.lineWidth = 1 / k;
+      ctx.globalAlpha = 0.3;
+      for (const poly of polys) {
+        if (poly.length < 3) continue;
+        ctx.beginPath();
+        poly.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+      // Graticule every 30°.
+      ctx.globalAlpha = 0.14;
+      ctx.beginPath();
+      const geoSpan = 180 * Math.PI * 140;
+      for (let lat = -60; lat <= 60; lat += 30) {
+        const gy = -((lat * Math.PI) / 180) * 140;
+        ctx.moveTo(-geoSpan, gy);
+        ctx.lineTo(geoSpan, gy);
+      }
+      for (let lon = -150; lon <= 150; lon += 30) {
+        const gx = ((lon * Math.PI) / 180) * 140;
+        ctx.moveTo(gx, -geoSpan);
+        ctx.lineTo(gx, geoSpan);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
 
     const nodes = nodesRef.current;
     const links = linksRef.current;
@@ -630,6 +743,27 @@ export default function ActorGraph({
       ctx.globalAlpha = 1;
     }
 
+    // ── Lasso selection overlay (world space polygon) ──
+    if (lassoRef.current.pts.length > 1) {
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = P.ink;
+      ctx.lineWidth = 1.2 / k;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      lassoRef.current.pts.forEach((p, i) =>
+        i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y),
+      );
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (lassoRef.current.active && lassoRef.current.pts.length > 2) {
+        ctx.globalAlpha = 0.06;
+        ctx.fillStyle = P.ink;
+        ctx.closePath();
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
     ctx.restore();
     ctx.globalAlpha = 1;
 
@@ -902,6 +1036,11 @@ export default function ActorGraph({
       }
       const wp = toWorld(e.clientX, e.clientY);
       const node = nodeAt(wp.x, wp.y);
+      // Lasso mode: drag on empty canvas draws a selection polygon.
+      if (lassoEnabled && !node) {
+        lassoRef.current = { active: true, pts: [wp] };
+        return;
+      }
       dragRef.current = { node, moved: false };
       if (node) {
         const sim = simulationRef.current;
@@ -941,6 +1080,12 @@ export default function ActorGraph({
         draw();
         return;
       }
+      if (lassoRef.current.active) {
+        const wp = toWorld(e.clientX, e.clientY);
+        lassoRef.current.pts.push(wp);
+        draw();
+        return;
+      }
       // hover feedback + tooltip
       const wp = toWorld(e.clientX, e.clientY);
       const n = nodeAt(wp.x, wp.y);
@@ -975,6 +1120,22 @@ export default function ActorGraph({
       }
       dragRef.current = { node: null, moved: false };
       panning = false;
+
+      // Finish lasso: point-in-polygon test over all nodes.
+      if (lassoRef.current.active) {
+        const pts = lassoRef.current.pts;
+        lassoRef.current = { active: false, pts: [] };
+        if (pts.length > 2 && onLassoSelect) {
+          const hits = new Set<string>();
+          for (const n of nodesRef.current) {
+            if (n.x === undefined || n.y === undefined) continue;
+            if (pointInPolygon({ x: n.x, y: n.y }, pts)) hits.add(n.id);
+          }
+          onLassoSelect(hits);
+        }
+        draw();
+        return;
+      }
 
       const wp = toWorld(e.clientX, e.clientY);
       const node = nodeAt(wp.x, wp.y);
@@ -1030,7 +1191,18 @@ export default function ActorGraph({
       canvas.removeEventListener("pointerleave", onLeave);
       canvas.removeEventListener("wheel", onWheel);
     };
-  }, [toWorld, nodeAt, edgeAt, draw, onSelect, onEdgeSelect, selectedSlug, showMinimap]);
+  }, [
+    toWorld,
+    nodeAt,
+    edgeAt,
+    draw,
+    onSelect,
+    onEdgeSelect,
+    selectedSlug,
+    showMinimap,
+    lassoEnabled,
+    onLassoSelect,
+  ]);
 
   // Double-click a node to pin/unpin; double-click background to fit all
   useEffect(() => {
