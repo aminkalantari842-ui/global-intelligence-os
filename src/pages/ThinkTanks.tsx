@@ -1,7 +1,7 @@
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useI18n } from "@/i18n/context";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -98,9 +98,19 @@ function fmtRelative(ts: number) {
 function TranslationBlock({
   title,
   summary,
+  batchKey,
+  batchSeq,
+  batchSize,
+  onBatchDone,
 }: {
   title: string;
   summary: string;
+  /** Bumped when the user clicks "translate visible" — triggers auto-run. */
+  batchKey: number;
+  /** Position in the visible list — staggers concurrent model calls. */
+  batchSeq: number;
+  batchSize: number;
+  onBatchDone: () => void;
 }) {
   const { t } = useI18n();
   const translate = useAction(api.translations.translatePublication);
@@ -122,8 +132,22 @@ function TranslationBlock({
         status: "error",
         message: msg.includes("AI_API_KEY") ? t("ai.noKey") : t("tt.translateError"),
       });
+    } finally {
+      if (batchSize > 0) onBatchDone();
     }
   };
+
+  // Batch orchestration: staggered start (seq × 350ms) keeps concurrent
+  // model calls bounded; the bump of batchKey is the global start signal.
+  const startedRef = useRef(0);
+  useEffect(() => {
+    if (batchKey === 0) return;
+    if (startedRef.current === batchKey) return;
+    startedRef.current = batchKey;
+    const id = setTimeout(() => void run(), batchSeq * 350);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [batchKey]);
 
   if (state.status === "idle") {
     return (
@@ -199,6 +223,10 @@ export default function ThinkTanks() {
   const [refreshing, setRefreshing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  // Batch FA translation of the visible list, with live progress.
+  const [batchTotal, setBatchTotal] = useState(0);
+  const [batchDone, setBatchDone] = useState(0);
+  const [batchKey, setBatchKey] = useState(0); // bump → TranslationBlocks auto-open
 
   const syncRegistry = useMutation(api.thinkTankSeed.syncRegistry);
 
@@ -311,20 +339,53 @@ export default function ThinkTanks() {
               {t("tt.desc")}
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="shrink-0 gap-1.5 text-xs"
-            onClick={handleRefresh}
-            disabled={refreshing || syncing}
-          >
-            {refreshing ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="size-3.5" />
+          <div className="flex shrink-0 flex-col items-end gap-1.5">
+            <div className="flex items-center gap-2">
+              {lang === "fa" && pubs && pubs.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-xs"
+                  onClick={() => {
+                    setBatchDone(0);
+                    setBatchTotal(pubs.length);
+                    setBatchKey((k) => k + 1);
+                  }}
+                  disabled={refreshing || syncing || batchDone < batchTotal}
+                >
+                  <Languages className="size-3.5" />
+                  {t("tt.translateVisible")}
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs"
+                onClick={handleRefresh}
+                disabled={refreshing || syncing}
+              >
+                {refreshing ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="size-3.5" />
+                )}
+                {t("tt.refreshAll")}
+              </Button>
+            </div>
+            {batchTotal > 0 && (
+              <div className="flex w-44 items-center gap-2">
+                <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-foreground transition-all"
+                    style={{ width: `${(batchDone / batchTotal) * 100}%` }}
+                  />
+                </div>
+                <span className="text-[10px] tabular-nums text-muted-foreground">
+                  {batchDone}/{batchTotal}
+                </span>
+              </div>
             )}
-            {t("tt.refreshAll")}
-          </Button>
+          </div>
         </div>
 
         {/* Status message */}
@@ -715,7 +776,7 @@ export default function ThinkTanks() {
             )}
 
             {/* Publications list */}
-            {pubs?.map((pub) => {
+            {pubs?.map((pub, batchSeq) => {
               const tankInfo = tankStats?.[pub.thinkTankSlug];
               return (
                 <a
@@ -739,6 +800,10 @@ export default function ThinkTanks() {
                         <TranslationBlock
                           title={pub.title}
                           summary={pub.summary}
+                          batchKey={batchKey}
+                          batchSeq={batchSeq}
+                          batchSize={batchTotal}
+                          onBatchDone={() => setBatchDone((d) => d + 1)}
                         />
                       )}
                     </div>

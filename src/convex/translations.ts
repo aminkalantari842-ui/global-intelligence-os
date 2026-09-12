@@ -1,12 +1,11 @@
 // Operational FA translation layer for ingested content.
 //
 // Design (usage-optimized + auditable):
-//  - One cache row per publication, keyed by SHA-256(title + "\n" + summary).
+//  - One cache row per unique title+body pair, keyed by SHA-256.
 //    Translations are immutable content artifacts: same input → same key,
 //    so the LLM is never called twice for the same text (rule 9, idempotent).
 //  - The LLM is a translation utility only — it never produces intelligence,
-//    scores, or claims (rules 3 & 4). Translated rows keep a link to the
-//    original publication and note the model used (rule 5, provenance).
+//    scores, or claims (rules 3 & 4). Rows record the model used (rule 5).
 //  - A bounded backfill cron warms the cache for the newest items; the UI
 //    also translates on demand for anything the cron has not reached yet.
 
@@ -15,6 +14,7 @@ import {
   internalMutation,
   internalQuery,
   action,
+  query,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
@@ -81,13 +81,6 @@ function splitTranslation(out: string): { titleFa: string; summaryFa: string } {
   };
 }
 
-async function getCacheRow(ctx: any, key: string) {
-  return await ctx.db
-    .query("translations")
-    .withIndex("by_hash", (q: any) => q.eq("hash", key))
-    .unique();
-}
-
 interface TranslationRow {
   hash: string;
   titleFa: string;
@@ -109,8 +102,15 @@ interface PendingTranslation {
   key: string;
 }
 
-/** Cache lookup for N composite keys (page batch). */
-export const getTranslations = internalQuery({
+async function getCacheRow(ctx: any, key: string) {
+  return await ctx.db
+    .query("translations")
+    .withIndex("by_hash", (q: any) => q.eq("hash", key))
+    .unique();
+}
+
+/** Public batch cache lookup — availability check with zero model calls. */
+export const lookupTranslations = query({
   args: { keys: v.array(v.string()) },
   handler: async (ctx, { keys }): Promise<Array<TranslationRow>> => {
     const rows: TranslationRow[] = [];
@@ -172,6 +172,18 @@ export const storeTranslation = internalMutation({
       model,
       createdAt: Date.now(),
     });
+  },
+});
+
+export const getTranslations = internalQuery({
+  args: { keys: v.array(v.string()) },
+  handler: async (ctx, { keys }): Promise<Array<TranslationRow>> => {
+    const rows: TranslationRow[] = [];
+    for (const key of keys.slice(0, 60)) {
+      const row = await getCacheRow(ctx, key);
+      if (row) rows.push(row);
+    }
+    return rows;
   },
 });
 
