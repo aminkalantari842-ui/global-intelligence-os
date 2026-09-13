@@ -1,8 +1,7 @@
 import { httpRouter } from "convex/server";
-import { auth } from "./auth";
 
+// Auth has been removed from this application — no HTTP routes are needed.
+// The file stays because Convex expects convex/http.ts as the HTTP entry point.
 const http = httpRouter();
-
-auth.addHttpRoutes(http);
 
 export default http;

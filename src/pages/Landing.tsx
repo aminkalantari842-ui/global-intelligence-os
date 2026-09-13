@@ -103,12 +103,10 @@ export default function Landing() {
             <a href="#analyst" className="transition-colors hover:text-foreground">{t("land.navAnalyst")}</a>
           </nav>
           <div className="flex items-center gap-2">
-            <Button asChild variant="ghost" size="sm">
-              <Link to="/auth" className="text-xs">{t("btn.signin")}</Link>
-            </Button>
             <Button asChild size="sm">
-              <Link to="/auth?returnTo=%2Fdashboard" className="text-xs">
-                {t("btn.signup")}
+              <Link to="/dashboard" className="gap-1.5 text-xs">
+                {t("land.openGraph")}
+                <ArrowRight className="size-3.5" />
               </Link>
             </Button>
           </div>
@@ -129,7 +127,7 @@ export default function Landing() {
           </p>
           <div className="mt-7 flex items-center justify-center gap-3">
             <Button asChild size="sm" className="h-9 px-4">
-              <Link to="/auth?returnTo=%2Fdashboard" className="gap-1.5 text-xs">
+              <Link to="/dashboard" className="gap-1.5 text-xs">
                 {t("land.openGraph")}
                 <ArrowRight className="size-3.5" />
               </Link>
@@ -280,7 +278,7 @@ export default function Landing() {
                 ))}
               </ul>
               <Button asChild variant="outline" size="sm" className="mt-7 h-9 px-4">
-                <Link to="/auth?returnTo=%2Fthinktanks" className="gap-1.5 text-xs">
+                <Link to="/thinktanks" className="gap-1.5 text-xs">
                   {t("nav.thinktanks")}
                   <ArrowRight className="size-3.5" />
                 </Link>
@@ -350,7 +348,7 @@ export default function Landing() {
               </div>
             </div>
             <Button asChild variant="outline" size="sm" className="mt-6 h-9 px-4">
-              <Link to="/auth?returnTo=%2Fanalyst" className="gap-1.5 text-xs">
+              <Link to="/analyst" className="gap-1.5 text-xs">
                 {t("nav.analyst")}
                 <ArrowRight className="size-3.5" />
               </Link>
@@ -395,7 +393,7 @@ export default function Landing() {
                 ))}
               </ul>
               <Button asChild variant="outline" size="sm" className="mt-7 h-9 px-4">
-                <Link to="/auth?returnTo=%2Fdashboard" className="gap-1.5 text-xs">
+                <Link to="/dashboard" className="gap-1.5 text-xs">
                   {t("land.openGraph")}
                   <ArrowRight className="size-3.5" />
                 </Link>
@@ -513,7 +511,7 @@ export default function Landing() {
             {t("land.accessCta")}
           </h3>
           <Button asChild size="sm" className="mt-6 h-9 px-5">
-            <Link to="/auth?returnTo=%2Fdashboard" className="gap-1.5 text-xs">
+            <Link to="/dashboard" className="gap-1.5 text-xs">
               {t("btn.signup")}
               <ArrowRight className="size-3.5" />
             </Link>

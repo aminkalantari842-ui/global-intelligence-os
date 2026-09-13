@@ -1,18 +1,16 @@
 import '@vly-ai/integrations';
 import { Toaster } from "@/components/ui/sonner";
-import { RequireAuth } from "@/components/RequireAuth";
 import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
-import { ConvexAuthProvider } from "@convex-dev/auth/react";
+import { ConvexProvider } from "convex/react";
 import { ConvexReactClient } from "convex/react";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Route, Routes, useLocation } from "react-router";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router";
 import { I18nProvider } from "@/i18n/context";
 import { LangToggle } from "@/components/LangToggle";
 import "./index.css";
 
 const Landing = lazy(() => import("./pages/Landing.tsx"));
-const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
 const ThinkTanks = lazy(() => import("./pages/ThinkTanks.tsx"));
 const Analyst = lazy(() => import("./pages/Analyst.tsx"));
@@ -86,7 +84,7 @@ createRoot(document.getElementById("root")!).render(
       <ToolbarErrorBoundary>
         <VlyToolbar />
       </ToolbarErrorBoundary>
-      <ConvexAuthProvider client={convex}>
+      <ConvexProvider client={convex}>
         <I18nProvider>
           <BrowserRouter>
             <RouteSyncer />
@@ -97,17 +95,18 @@ createRoot(document.getElementById("root")!).render(
             <Suspense fallback={<RouteLoading />}>
               <Routes>
                 <Route path="/" element={<Landing />} />
-                <Route path="/auth" element={<AuthPage redirectAfterAuth="/dashboard" />} />
-                <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
-                <Route path="/thinktanks" element={<RequireAuth><ThinkTanks /></RequireAuth>} />
-                <Route path="/analyst" element={<RequireAuth><Analyst /></RequireAuth>} />
+                {/* Auth removed: legacy /auth URLs go straight to the console */}
+                <Route path="/auth" element={<Navigate to="/dashboard" replace />} />
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/thinktanks" element={<ThinkTanks />} />
+                <Route path="/analyst" element={<Analyst />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>
           </BrowserRouter>
         </I18nProvider>
-        <Toaster />
-      </ConvexAuthProvider>
+      </ConvexProvider>
+      <Toaster />
     </RootErrorBoundary>
   </StrictMode>,
 );

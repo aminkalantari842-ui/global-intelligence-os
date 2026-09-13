@@ -1,4 +1,3 @@
-import { authTables } from "@convex-dev/auth/server";
 import { defineSchema, defineTable } from "convex/server";
 import { Infer, v } from "convex/values";
 
@@ -18,20 +17,6 @@ export type Role = Infer<typeof roleValidator>;
 
 const schema = defineSchema(
   {
-    // default auth tables using convex auth.
-    ...authTables, // do not remove or modify
-
-    // the users table is the default users table that is brought in by the authTables
-    users: defineTable({
-      name: v.optional(v.string()), // name of the user. do not remove
-      image: v.optional(v.string()), // image of the user. do not remove
-      email: v.optional(v.string()), // email of the user. do not remove
-      emailVerificationTime: v.optional(v.number()), // email verification time. do not remove
-      isAnonymous: v.optional(v.boolean()), // is the user anonymous. do not remove
-
-      role: v.optional(roleValidator), // role of the user. do not remove
-    }).index("email", ["email"]), // index for the email. do not remove or modify
-
     // ─── Actor Intelligence ────────────────────────────────────────────────
     // A canonical geopolitical actor (state, institution, organization).
     // Every field is attributable: sourceCount = number of independent
@@ -355,7 +340,7 @@ const schema = defineSchema(
 
     // ─── Per-user Watchlist (Phase 2) ─────────────────────────────────────
     userWatchlists: defineTable({
-      userId: v.id("users"),
+      userId: v.string(),
       actorSlug: v.string(),
       createdAt: v.number(),
     }).index("by_user", ["userId"]),
@@ -364,7 +349,7 @@ const schema = defineSchema(
     // Generic key/value store per user: "lastSeen" (timestamp of the last
     // processed change-log entry), "timeWindow" (graph time-scrub days).
     userViewState: defineTable({
-      userId: v.id("users"),
+      userId: v.string(),
       key: v.string(),
       value: v.number(),
     })
@@ -525,7 +510,6 @@ const schema = defineSchema(
       rounds: v.optional(v.number()),
       payload: v.string(), // JSON: branches/steps with rungs, probabilities, paths
       anchoredEvidence: v.optional(v.array(v.id("relationEvents"))),
-      createdBy: v.optional(v.id("users")),
       ts: v.number(),
     }).index("by_ts", ["ts"]),
 
@@ -549,7 +533,7 @@ const schema = defineSchema(
 
     // ─── §9.2 Analyst notes (provenanced annotations) ──────────────────
     userNotes: defineTable({
-      userId: v.id("users"),
+      userId: v.string(),
       authorName: v.string(),
       targetType: v.union(
         v.literal("ACTOR"),
@@ -563,7 +547,7 @@ const schema = defineSchema(
 
     // ─── §9.2 Saved views (filters + time slice) ─────────────────────
     savedViews: defineTable({
-      userId: v.id("users"),
+      userId: v.string(),
       name: v.string(),
       filters: v.string(),
       timeSlice: v.optional(v.number()),

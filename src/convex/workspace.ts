@@ -1,15 +1,11 @@
 // §9.2 Analyst workspace: provenanced notes on actors/edges/events and
-// reusable saved views (filters + time slice). User-scoped, deterministic.
+// reusable saved views (filters + time slice). Auth removed — the app is a
+// single shared analyst workspace, so notes and views are global.
 
-import { getAuthUserId } from "@convex-dev/auth/server";
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
-async function requireUserId(ctx: { auth: unknown; db: unknown }) {
-  const userId = await getAuthUserId(ctx as never);
-  if (!userId) throw new Error("NOT_AUTHENTICATED");
-  return userId;
-}
+const WORKSPACE_ID = "shared-workspace";
 
 // ─── Notes ──────────────────────────────────────────────────────────────────
 
@@ -37,13 +33,11 @@ export const addNote = mutation({
     authorName: v.optional(v.string()),
   },
   handler: async (ctx, { targetType, targetId, body, authorName }) => {
-    const userId = await requireUserId(ctx);
     const trimmed = body.trim();
     if (!trimmed) return null;
-    const user = userId ? await ctx.db.get(userId) : null;
     return await ctx.db.insert("userNotes", {
-      userId,
-      authorName: authorName ?? user?.name ?? user?.email ?? "analyst",
+      userId: WORKSPACE_ID,
+      authorName: authorName ?? "analyst",
       targetType,
       targetId,
       body: trimmed.slice(0, 4000),
@@ -55,10 +49,6 @@ export const addNote = mutation({
 export const deleteNote = mutation({
   args: { id: v.id("userNotes") },
   handler: async (ctx, { id }) => {
-    const userId = await requireUserId(ctx);
-    const note = await ctx.db.get(id);
-    if (!note) return;
-    if (note.userId !== userId) throw new Error("FORBIDDEN");
     await ctx.db.delete(id);
   },
 });
@@ -68,11 +58,9 @@ export const deleteNote = mutation({
 export const listViews = query({
   args: {},
   handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) return [];
     return await ctx.db
       .query("savedViews")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .withIndex("by_user", (q) => q.eq("userId", WORKSPACE_ID))
       .order("desc")
       .take(30);
   },
@@ -85,9 +73,8 @@ export const saveView = mutation({
     timeSlice: v.optional(v.number()),
   },
   handler: async (ctx, { name, filters, timeSlice }) => {
-    const userId = await requireUserId(ctx);
     return await ctx.db.insert("savedViews", {
-      userId,
+      userId: WORKSPACE_ID,
       name: name.trim().slice(0, 80),
       filters,
       timeSlice,
@@ -99,10 +86,6 @@ export const saveView = mutation({
 export const deleteView = mutation({
   args: { id: v.id("savedViews") },
   handler: async (ctx, { id }) => {
-    const userId = await requireUserId(ctx);
-    const view = await ctx.db.get(id);
-    if (!view) return;
-    if (view.userId !== userId) throw new Error("FORBIDDEN");
     await ctx.db.delete(id);
   },
 });

@@ -4,7 +4,6 @@
 
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import type { Id } from "@/convex/_generated/dataModel";
 import { useI18n } from "@/i18n/context";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -716,6 +715,5 @@ export function WatchButton({
 }
 
 export type WatchRow = { _id: string; actorSlug: string } & {
-  userId?: Id<"users">;
   createdAt?: number;
 };

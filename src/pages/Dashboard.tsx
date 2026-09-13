@@ -2,7 +2,6 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import type { useQuery as useQueryType } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
-import { useAuth } from "@/hooks/use-auth";
 import { useI18n } from "@/i18n/context";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
@@ -1187,7 +1186,6 @@ function downloadFile(name: string, content: string, mime: string) {
 }
 
 export default function Dashboard() {
-  const { user, signOut } = useAuth();
   const { t, lang } = useI18n();
   const navigate = useNavigate();
 
@@ -1217,7 +1215,6 @@ export default function Dashboard() {
   const [search, setSearch] = useState("");
   const [focusMode, setFocusMode] = useState(true);
   const [helpOpen, setHelpOpen] = useState(false);
-  // ── Phase 2 state ──
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<"jump" | "compare">("jump");
   const [compareSlug, setCompareSlug] = useState<string | null>(null);
@@ -1564,12 +1561,7 @@ ${edges}
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const handleSignOut = async () => {
-    await signOut();
-    navigate("/");
-  };
-
-  return (
+    return (
     <div className="flex h-screen flex-col bg-background text-foreground" dir={lang === "fa" ? "rtl" : "ltr"}>
       {/* Top bar */}
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
@@ -1621,11 +1613,8 @@ ${edges}
             <kbd className="font-mono text-[10px] text-muted-foreground">⌘K</kbd>
           </Button>
           <span className="hidden text-xs text-muted-foreground md:inline">
-            {user?.email}
+            {t("dash.registryLive")}
           </span>
-          <Button variant="outline" size="sm" onClick={handleSignOut} className="gap-1.5">
-            <LogOut className="size-3.5" /> {t("btn.signout")}
-          </Button>
         </div>
       </header>
 
