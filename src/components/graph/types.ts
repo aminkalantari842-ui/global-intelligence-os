@@ -25,6 +25,13 @@ export interface GraphRelation {
   updatedAt: number;
   sourceCount: number;
   summary: string;
+  // ─── §3.2 edge dynamics (optional, older rows may predate them) ───
+  symmetry?: "SYMMETRIC" | "ASYMMETRIC";
+  benefitSource?: number;
+  benefitTarget?: number;
+  breaks?: number;
+  coldSpellDays?: number;
+  regimeShifts?: Array<{ from: string; to: string; ts: number }>;
 }
 
 export interface GraphPayload {

@@ -48,6 +48,13 @@ const schema = defineSchema(
         v.literal("ORGANIZATION"),
         v.literal("COMPANY"),
         v.literal("THINK_TANK"),
+        // §2.2 extended actor classes
+        v.literal("INTERNATIONAL_ORG"), // UN, GCC, BRICS…
+        v.literal("TRANSNATIONAL_MOVEMENT"), // movements, armed networks
+        v.literal("STATE_ENTERPRISE"), // SOEs with geopolitical role
+        v.literal("MEDIA_NETWORK"), // influence channels
+        v.literal("INFRASTRUCTURE"), // pipelines, corridors, straits
+        v.literal("DEV_BANK"),
       ),
       country: v.string(), // primary country of origin / seat, ISO short name
       region: v.string(),
@@ -57,9 +64,70 @@ const schema = defineSchema(
       status: v.union(v.literal("ACTIVE"), v.literal("MONITORED")),
       firstSeen: v.number(), // epoch ms — first ingestion
       lastSeen: v.number(), // epoch ms — most recent source reference
+      // ─── §2.1/§2.3 actor enrichment (optional, snapshot-able) ───
+      mode: v.optional(
+        v.union(
+          v.literal("ACTIVE"),
+          v.literal("MONITORED"),
+          v.literal("DORMANT"),
+          v.literal("DISSOLVED"),
+        ),
+      ),
+      modeSince: v.optional(v.number()),
+      // Capability indices 0–100, deterministic, timestamped at write.
+      capabilities: v.optional(
+        v.object({
+          military: v.number(),
+          economic: v.number(),
+          diplomatic: v.number(),
+          intelligence: v.number(),
+          cultural: v.number(),
+          energy: v.number(),
+        }),
+      ),
+      // Internal variables (belong to the actor).
+      internalVars: v.optional(
+        v.object({
+          politicalStability: v.number(),
+          regimeDurability: v.number(),
+          publicOpinion: v.number(),
+          sanctionsPressure: v.number(),
+          macroEconomy: v.number(),
+          cohesion: v.number(),
+        }),
+      ),
+      // Environmental variables (dependence / exposure).
+      envVars: v.optional(
+        v.object({
+          energyDependence: v.number(),
+          tradeDependence: v.number(),
+          supplyVulnerability: v.number(),
+          geographicSensitivity: v.number(),
+        }),
+      ),
+      // Decision cycle (documented, not modeled).
+      decisionCycle: v.optional(
+        v.object({
+          hardCore: v.string(),
+          commandStructure: v.string(),
+          doctrine: v.string(),
+          strategicCulture: v.string(),
+          planningHorizon: v.string(),
+        }),
+      ),
+      leaders: v.optional(
+        v.array(
+          v.object({ name: v.string(), role: v.string(), since: v.number() }),
+        ),
+      ),
+      // §2.3 monitoring heart: what / why / with which sources.
+      monitoring: v.optional(
+        v.object({ what: v.string(), why: v.string(), sources: v.string() }),
+      ),
     })
       .index("by_slug", ["slug"])
-      .index("by_status", ["status"]),
+      .index("by_status", ["status"])
+      .index("by_mode", ["mode"]),
 
     // ─── Relationships ─────────────────────────────────────────────────────
     // An evidence-backed, directed pair between two canonical actors.
@@ -77,18 +145,47 @@ const schema = defineSchema(
         v.literal("TENSION"),
         v.literal("SANCTIONS"),
         v.literal("CONFLICT"),
+        // §3.1 extended kinds
+        v.literal("INTERDEPENDENCE"),
+        v.literal("MEDIATION"),
+        v.literal("DETERRENCE"),
+        v.literal("NON_AGGRESSION"),
+        v.literal("TREATY"),
+        v.literal("SECURITY_CONSULT"),
+        v.literal("INTEL_SHARING"),
+        v.literal("TRANSIT_ACCESS"),
+        v.literal("DEBT_AID"),
+        v.literal("DEPENDENCY"),
       ),
       weight: v.number(), // 0–100 engagement intensity, deterministic model
       confidence: v.number(), // 0–100: corroboration × source quality × freshness
       status: v.union(
-        v.literal("CONFIRMED"), // corroborated by independent primary sources
-        v.literal("REPORTED"), // single-source or secondhand reporting
-        v.literal("DISPUTED"), // sources disagree — surfaced, never merged
+        v.literal("CONFIRMED"),
+        v.literal("REPORTED"),
+        v.literal("DISPUTED"),
       ),
-      since: v.number(), // epoch ms — first evidence of the relation
-      updatedAt: v.number(), // epoch ms — most recent supporting evidence
-      sourceCount: v.number(), // independent sources supporting this edge
-      summary: v.string(), // evidence summary, kept neutral
+      since: v.number(),
+      updatedAt: v.number(),
+      sourceCount: v.number(),
+      summary: v.string(),
+      // ─── §3.2 edge dynamics (all deterministic at ingest) ───
+      symmetry: v.optional(
+        v.union(v.literal("SYMMETRIC"), v.literal("ASYMMETRIC")),
+      ),
+      // Who benefits: share of benefit carried by source vs target (0–100).
+      benefitSource: v.optional(v.number()),
+      benefitTarget: v.optional(v.number()),
+      breaks: v.optional(v.number()), // documented ruptures count
+      coldSpellDays: v.optional(v.number()), // longest documented chill
+      regimeShifts: v.optional(
+        v.array(
+          v.object({
+            from: v.string(),
+            to: v.string(),
+            ts: v.number(),
+          }),
+        ),
+      ),
     })
       .index("by_source", ["sourceSlug"])
       .index("by_target", ["targetSlug"])
@@ -168,15 +265,48 @@ const schema = defineSchema(
         v.literal("REPORT"),
         v.literal("AGREEMENT"),
         v.literal("POSTURE"),
+        // §5.1 extended event types
+        v.literal("ELECTION"),
+        v.literal("REFERENDUM"),
+        v.literal("TREATY_SIGNED"),
+        v.literal("MILITARY_EXERCISE"),
+        v.literal("MISSILE_TEST"),
+        v.literal("BLOCKADE"),
+        v.literal("SEIZURE"),
+        v.literal("DIPLOMATIC_SUMMIT"),
+        v.literal("AMBASSADOR_RECALL"),
+        v.literal("RELATIONS_SEVERED"),
+        v.literal("WITHDRAWAL"),
+        v.literal("RECOGNITION"),
+        v.literal("CYBER_ATTACK"),
+        v.literal("DOMESTIC_UPHEAVAL"),
       ),
       title: v.string(),
       summary: v.string(),
-      confidence: v.number(), // 0–100
+      confidence: v.number(),
       claimType: v.union(
-        v.literal("OBSERVED_FACT"), // independently verifiable
-        v.literal("REPORTED_CLAIM"), // asserted by a source, unverified
-        v.literal("ASSESSMENT"), // analytic interpretation
+        v.literal("OBSERVED_FACT"),
+        v.literal("REPORTED_CLAIM"),
+        v.literal("ASSESSMENT"),
       ),
+      // §6.2 documented reaction chain: this event explicitly responds to
+      // another event (statement "in response to…").
+      inResponseTo: v.optional(v.id("relationEvents")),
+      // §5.4 richer time & place.
+      timeFrom: v.optional(v.number()),
+      timeTo: v.optional(v.number()),
+      timePrecision: v.optional(
+        v.union(v.literal("EXACT"), v.literal("APPROX")),
+      ),
+      place: v.optional(
+        v.object({
+          country: v.string(),
+          city: v.optional(v.string()),
+          lat: v.optional(v.number()),
+          lon: v.optional(v.number()),
+        }),
+      ),
+      escalationRung: v.optional(v.number()), // §6.3 escalation ladder rung
       sources: v.array(
         v.object({
           publication: v.string(),
@@ -252,6 +382,172 @@ const schema = defineSchema(
       model: v.string(),
       createdAt: v.number(),
     }).index("by_hash", ["hash"]),
+
+    // ─── §2.1 Actor Snapshots (historical time-slices) ───────────────────
+    // Point-in-time capture of all indices for trend analysis and
+    // "actor at time t" replay. Append-only.
+    actorSnapshots: defineTable({
+      slug: v.string(),
+      ts: v.number(),
+      tier: v.number(),
+      mode: v.optional(v.string()),
+      sourceCount: v.number(),
+      capabilities: v.optional(
+        v.object({
+          military: v.number(),
+          economic: v.number(),
+          diplomatic: v.number(),
+          intelligence: v.number(),
+          cultural: v.number(),
+          energy: v.number(),
+        }),
+      ),
+      internalVars: v.optional(
+        v.object({
+          politicalStability: v.number(),
+          regimeDurability: v.number(),
+          publicOpinion: v.number(),
+          sanctionsPressure: v.number(),
+          macroEconomy: v.number(),
+          cohesion: v.number(),
+        }),
+      ),
+    }).index("by_slug_ts", ["slug", "ts"]),
+
+    // ─── §3.3 Network Metrics (computed at ingest, deterministic) ────────
+    networkMetrics: defineTable({
+      ts: v.number(),
+      scope: v.string(), // "global" or a region name
+      nodeCount: v.number(),
+      density: v.number(), // 0–1
+      centrality: v.array(
+        v.object({
+          slug: v.string(),
+          degree: v.number(),
+          betweenness: v.number(),
+          closeness: v.number(),
+        }),
+      ),
+      brokers: v.array(v.string()),
+      blocks: v.array(
+        v.object({
+          label: v.string(),
+          members: v.array(v.string()),
+          cohesion: v.number(),
+        }),
+      ),
+    }).index("by_ts", ["ts"]),
+
+    // ─── §4.4 Alerts (rule-based, evidence-linked) ───────────────────────
+    alerts: defineTable({
+      rule: v.string(),
+      severity: v.union(v.literal("HIGH"), v.literal("MEDIUM"), v.literal("LOW")),
+      actorSlugs: v.array(v.string()),
+      relationId: v.optional(v.id("relationships")),
+      title: v.string(),
+      detail: v.string(),
+      ts: v.number(),
+      acknowledged: v.optional(v.boolean()),
+    }).index("by_ts", ["ts"]),
+
+    // ─── §4.1/§4.2 Source Registry ─────────────────────────────────────
+    sourceRegistry: defineTable({
+      slug: v.string(),
+      name: v.string(),
+      kind: v.union(
+        v.literal("WIRE"),
+        v.literal("NATIONAL_MEDIA"),
+        v.literal("OFFICIAL_DOCUMENT"),
+        v.literal("SANCTION_LIST"),
+        v.literal("OSINT"),
+        v.literal("FINANCIAL_DATA"),
+        v.literal("SOCIAL_SPEECH"),
+      ),
+      regions: v.array(v.string()),
+      languages: v.array(v.string()),
+      baseCredibility: v.number(),
+      knownBias: v.optional(v.string()),
+      calibrationScore: v.optional(v.number()),
+      lastFetched: v.optional(v.number()),
+      errorRate: v.optional(v.number()),
+      enabled: v.boolean(),
+    })
+      .index("by_slug", ["slug"])
+      .index("by_kind", ["kind"]),
+
+    // ─── §5.3 Claim Graph ─────────────────────────────────────────────
+    claims: defineTable({
+      text: v.string(),
+      claimType: v.union(
+        v.literal("OBSERVED_FACT"),
+        v.literal("REPORTED_CLAIM"),
+        v.literal("ASSESSMENT"),
+      ),
+      actorSlugs: v.array(v.string()),
+      status: v.union(
+        v.literal("OPEN"),
+        v.literal("CORROBORATED"),
+        v.literal("CONTESTED"),
+        v.literal("RETRACTED"),
+      ),
+      sources: v.array(
+        v.object({ sourceSlug: v.string(), url: v.string(), date: v.string() }),
+      ),
+      supports: v.optional(v.array(v.id("claims"))),
+      contradicts: v.optional(v.array(v.id("claims"))),
+      relationId: v.optional(v.id("relationships")),
+      ts: v.number(),
+    }).index("by_ts", ["ts"]),
+
+    // ─── §6.4 Tripwires (declared thresholds) ─────────────────────────
+    tripwires: defineTable({
+      actorSlug: v.string(),
+      condition: v.string(),
+      action: v.string(),
+      sourceRef: v.string(),
+      ts: v.number(),
+    }).index("by_actor", ["actorSlug"]),
+
+    // ─── §7.3 Assessments / predictions with calibration ─────────────
+    assessments: defineTable({
+      subject: v.string(),
+      text: v.string(),
+      probability: v.number(),
+      horizonTs: v.number(),
+      owner: v.union(v.literal("MODEL"), v.literal("ANALYST")),
+      status: v.union(
+        v.literal("OPEN"),
+        v.literal("RESOLVED_TRUE"),
+        v.literal("RESOLVED_FALSE"),
+        v.literal("EXPIRED"),
+      ),
+      brierScore: v.optional(v.number()),
+      evidenceIds: v.optional(v.array(v.id("relationEvents"))),
+      ts: v.number(),
+    }).index("by_status", ["status"]),
+
+    // ─── §9.2 Analyst notes (provenanced annotations) ──────────────────
+    userNotes: defineTable({
+      userId: v.id("users"),
+      authorName: v.string(),
+      targetType: v.union(
+        v.literal("ACTOR"),
+        v.literal("EDGE"),
+        v.literal("EVENT"),
+      ),
+      targetId: v.string(),
+      body: v.string(),
+      ts: v.number(),
+    }).index("by_target", ["targetType", "targetId"]),
+
+    // ─── §9.2 Saved views (filters + time slice) ─────────────────────
+    savedViews: defineTable({
+      userId: v.id("users"),
+      name: v.string(),
+      filters: v.string(),
+      timeSlice: v.optional(v.number()),
+      createdAt: v.number(),
+    }).index("by_user", ["userId"]),
   },
   {
     schemaValidation: false,

@@ -59,6 +59,13 @@ export const getGraph = query({
         updatedAt: r.updatedAt,
         sourceCount: r.sourceCount,
         summary: r.summary,
+        // §3.2 edge dynamics
+        symmetry: r.symmetry,
+        benefitSource: r.benefitSource,
+        benefitTarget: r.benefitTarget,
+        breaks: r.breaks,
+        coldSpellDays: r.coldSpellDays,
+        regimeShifts: r.regimeShifts,
       })),
       generatedAt: dbNow(),
     };
@@ -108,13 +115,21 @@ export const getEventMarkers = query({
     const now = dbNow();
     const cutoff14d = now - 14 * 86_400_000;
 
-    const byRelation = new Map<string, { latestTs: number; count14d: number; total: number }>();
+    const byRelation = new Map<
+      string,
+      { latestTs: number; count14d: number; total: number; series: Array<{ ts: number; type: string }> }
+    >();
     for (const e of events) {
       const key = String(e.relationId);
-      const cur = byRelation.get(key) ?? { latestTs: 0, count14d: 0, total: 0 };
+      const cur =
+        byRelation.get(key) ??
+        { latestTs: 0, count14d: 0, total: 0, series: [] };
       cur.total += 1;
       if (e.timestamp > cur.latestTs) cur.latestTs = e.timestamp;
       if (e.timestamp >= cutoff14d) cur.count14d += 1;
+      if (e.timestamp >= now - 90 * 86_400_000) {
+        cur.series.push({ ts: e.timestamp, type: e.type });
+      }
       byRelation.set(key, cur);
     }
 
@@ -125,6 +140,7 @@ export const getEventMarkers = query({
         latestTs: m.latestTs,
         count14d: m.count14d,
         total: m.total,
+        series: m.series,
       })),
     };
   },
