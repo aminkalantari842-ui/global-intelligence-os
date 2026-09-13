@@ -1,4 +1,4 @@
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useAuth } from "@/hooks/use-auth";
@@ -19,6 +19,8 @@ import {
   topByRisk,
   type ActorScoreRow,
 } from "@/components/graph/metrics";
+import { dynamicsFromMarkers, computeCentrality, detectBlocks } from "@/components/graph/network";
+import MatrixView from "@/components/graph/MatrixView";
 import {
   AiAnalystBox,
   ChangeFeed,
@@ -30,9 +32,15 @@ import {
 } from "@/components/graph/panels";
 import {
   ArrowLeft,
+  Bell,
+  Bookmark,
   Camera,
+  CircleDot,
   Crosshair,
+  Download,
+  FileJson,
   Globe2,
+  Grid3X3,
   GitCompareArrows,
   HelpCircle,
   Lasso,
@@ -40,6 +48,7 @@ import {
   LogOut,
   Maximize2,
   Minus,
+  NotebookPen,
   Pause,
   Play,
   Plus,
@@ -47,6 +56,8 @@ import {
   ScanSearch,
   Search,
   Share2,
+  Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 
@@ -286,6 +297,10 @@ function EdgePanel({
 
       <Separator className="my-4" />
 
+      <AnalystNotes targetType="EDGE" targetId={relation._id} />
+
+      <Separator className="my-4" />
+
       <div className="flex items-center justify-between px-4 pb-2">
         <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
           {t("edge.evidenceTrail")}
@@ -337,6 +352,82 @@ function EdgePanel({
             </li>
           ))}
         </ol>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * §9.2 Analyst notes on the selected actor or edge. Every note is
+ * provenance-stamped (author + timestamp) and stored server-side; notes
+ * never alter scores or statuses — they sit beside the evidence.
+ */
+function AnalystNotes({
+  targetType,
+  targetId,
+}: {
+  targetType: "ACTOR" | "EDGE" | "EVENT";
+  targetId: string;
+}) {
+  const { t, lang } = useI18n();
+  const notes = useQuery(api.workspace.listNotes, { targetType, targetId });
+  const addNote = useMutation(api.workspace.addNote);
+  const deleteNote = useMutation(api.workspace.deleteNote);
+  const [draft, setDraft] = useState("");
+
+  return (
+    <div className="px-4 pt-3">
+      <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+        {t("notes.title")}
+      </p>
+      <div className="mt-1.5 space-y-1">
+        {notes === undefined && <div className="h-6 animate-pulse rounded bg-muted/50" />}
+        {notes?.length === 0 && (
+          <p className="text-[10px] leading-4 text-muted-foreground">{t("notes.empty")}</p>
+        )}
+        {notes?.map((n) => (
+          <div key={n._id} className="rounded-md border border-border/60 px-2 py-1.5">
+            <p className="text-[11px] leading-4">{n.body}</p>
+            <div className="mt-1 flex items-center justify-between text-[9px] text-muted-foreground">
+              <span>
+                {n.authorName} · {fmtAgo(n.ts, lang)}
+              </span>
+              <button
+                className="hover:text-foreground"
+                onClick={() => void deleteNote({ id: n._id })}
+                aria-label={t("btn.delete")}
+              >
+                <Trash2 className="size-3" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-1.5 flex items-center gap-1">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && draft.trim()) {
+              void addNote({ targetType, targetId, body: draft });
+              setDraft("");
+            }
+          }}
+          placeholder={t("notes.placeholder")}
+          className="h-7 min-w-0 flex-1 rounded-md border border-border bg-card px-2 text-[11px] outline-none placeholder:text-muted-foreground focus:border-foreground/40"
+        />
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 px-2 text-[10px]"
+          disabled={!draft.trim()}
+          onClick={() => {
+            void addNote({ targetType, targetId, body: draft });
+            setDraft("");
+          }}
+        >
+          <NotebookPen className="size-3" />
+        </Button>
       </div>
     </div>
   );
@@ -522,6 +613,10 @@ function ActorPanel({
 
       <Separator className="my-4" />
 
+      <AnalystNotes targetType="ACTOR" targetId={actor.slug} />
+
+      <Separator className="my-4" />
+
       <PerActorChanges slug={actor.slug} />
 
       <p className="px-4 pb-2 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
@@ -558,6 +653,17 @@ function ActorPanel({
       </div>
     </div>
   );
+}
+
+/** Trigger a client-side file download (deterministic export payload). */
+function downloadFile(name: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export default function Dashboard() {
@@ -605,6 +711,19 @@ export default function Dashboard() {
   const [playing, setPlaying] = useState(false);
   const [playbackTs, setPlaybackTs] = useState<number | null>(null);
   const [playSpeed, setPlaySpeed] = useState(1);
+  // ── §3.3/§4.4/§9 state ──
+  const [egoDepth, setEgoDepth] = useState<0 | 1 | 2 | 3 | null>(null);
+  const [highlightNew, setHighlightNew] = useState(false);
+  const [matrixOpen, setMatrixOpen] = useState(false);
+  const [alertsOpen, setAlertsOpen] = useState(false);
+  const [viewsOpen, setViewsOpen] = useState(false);
+  const [viewDraft, setViewDraft] = useState("");
+  const saveView = useMutation(api.workspace.saveView);
+  const deleteView = useMutation(api.workspace.deleteView);
+  const evaluateAlerts = useMutation(api.alerts.evaluate);
+  const ackAlert = useMutation(api.alerts.acknowledge);
+  const alerts = useQuery(api.alerts.listAlerts, { limit: 40 });
+  const savedViews = useQuery(api.workspace.listViews, {});
 
   const graphRef = useRef<HTMLDivElement & {
     __zoomBy?: (f: number) => void;
@@ -617,12 +736,113 @@ export default function Dashboard() {
   const markersMap = useMemo(() => {
     const m: Record<string, EdgeMarker> = {};
     (markerData?.markers ?? []).forEach((mk) => {
-      m[mk.relationId] = { latestTs: mk.latestTs, count14d: mk.count14d, total: mk.total };
+      m[mk.relationId] = {
+        latestTs: mk.latestTs,
+        count14d: mk.count14d,
+        total: mk.total,
+        series: mk.series,
+      };
     });
     return m;
   }, [markerData]);
 
   const now = useMemo(() => Date.now(), []);
+
+  // §3.2 trajectory per edge — computed deterministically from marker series.
+  const dynamicsMap = useMemo(() => dynamicsFromMarkers(markersMap, now), [markersMap, now]);
+
+  // §3.3 network metrics — Brandes centrality + polarity blocks, recomputed
+  // only when the graph changes (O(V·E), fine at this scale).
+  const centrality = useMemo(
+    () => computeCentrality(graph?.actors ?? [], graph?.relations ?? []),
+    [graph?.actors, graph?.relations],
+  );
+  const blocks = useMemo(
+    () => detectBlocks(graph?.actors ?? [], graph?.relations ?? []),
+    [graph?.actors, graph?.relations],
+  );
+
+  // Export helpers — deterministic serialization of the current filtered view.
+  const exportJson = () => {
+    const data = {
+      generatedAt: new Date().toISOString(),
+      actors: graph?.actors ?? [],
+      relations: filteredRelations,
+    };
+    downloadFile(`world-monitor-graph-${Date.now()}.json`, JSON.stringify(data, null, 2), "application/json");
+  };
+  const exportCsv = () => {
+    const rows = [
+      ["source", "target", "kind", "weight", "confidence", "status", "since", "updatedAt", "sources"],
+      ...filteredRelations.map((r) => [
+        r.sourceSlug,
+        r.targetSlug,
+        r.kind,
+        String(r.weight),
+        String(r.confidence),
+        r.status,
+        new Date(r.since).toISOString(),
+        new Date(r.updatedAt).toISOString(),
+        String(r.sourceCount),
+      ]),
+    ];
+    const csv = rows.map((row) => row.map((c) => `"${c}"`).join(",")).join("\n");
+    downloadFile(`world-monitor-edges-${Date.now()}.csv`, csv, "text/csv");
+  };
+  const exportGraphml = () => {
+    const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    const nodes = (graph?.actors ?? [])
+      .map(
+        (a) =>
+          `    <node id="${esc(a.slug)}"><data key="label">${esc(a.name)}</data><data key="kind">${a.kind}</data><data key="country">${esc(a.country)}</data><data key="region">${esc(a.region)}</data><data key="tier">${a.tier}</data></node>`,
+      )
+      .join("\n");
+    const edges = filteredRelations
+      .map(
+        (r, i) =>
+          `    <edge id="e${i}" source="${esc(r.sourceSlug)}" target="${esc(r.targetSlug)}"><data key="kind">${r.kind}</data><data key="weight">${r.weight}</data><data key="confidence">${r.confidence}</data><data key="status">${r.status}</data></edge>`,
+      )
+      .join("\n");
+    const gml = `<?xml version="1.0" encoding="UTF-8"?>
+<graphml xmlns="http://graphml.graphdrawing.org/xmlns">
+  <key id="label" for="node" attr.name="label" attr.type="string"/>
+  <key id="kind" for="node" attr.name="kind" attr.type="string"/>
+  <key id="country" for="node" attr.name="country" attr.type="string"/>
+  <key id="region" for="node" attr.name="region" attr.type="string"/>
+  <key id="tier" for="node" attr.name="tier" attr.type="int"/>
+  <key id="ekind" for="edge" attr.name="kind" attr.type="string"/>
+  <key id="weight" for="edge" attr.name="weight" attr.type="double"/>
+  <key id="confidence" for="edge" attr.name="confidence" attr.type="double"/>
+  <key id="status" for="edge" attr.name="status" attr.type="string"/>
+  <graph id="G" edgedefault="undirected">
+${nodes}
+${edges}
+  </graph>
+</graphml>`;
+    downloadFile(`world-monitor-${Date.now()}.graphml`, gml, "application/xml");
+  };
+  const applyView = (v: { filters: string; timeSlice?: number }) => {
+    try {
+      const f = JSON.parse(v.filters) as {
+        kinds?: string[];
+        search?: string;
+        focus?: boolean;
+        hull?: "region" | "country" | "kind" | null;
+      };
+      setKindFilter(new Set(f.kinds ?? []));
+      setSearch(f.search ?? "");
+      setFocusMode(f.focus ?? true);
+      setHullBy(f.hull ?? null);
+      if (v.timeSlice) {
+        setPlaybackTs(v.timeSlice);
+      } else {
+        setPlaybackTs(null);
+      }
+      setViewsOpen(false);
+    } catch {
+      /* corrupt view — ignore */
+    }
+  };
   const topRisk = useMemo(
     () => topByRisk(graph?.actors ?? [], graph?.relations ?? [], lang, now),
     [graph?.actors, graph?.relations, lang, now],
@@ -1212,6 +1432,104 @@ export default function Dashboard() {
               >
                 <Share2 className="size-4" />
               </Button>
+              {/* §9.1 matrix view */}
+              <Button
+                variant={matrixOpen ? "default" : "outline"}
+                size="icon"
+                className="size-8"
+                onClick={() => setMatrixOpen((v) => !v)}
+                aria-label={t("matrix.title")}
+                title={t("matrix.title")}
+              >
+                <Grid3X3 className="size-4" />
+              </Button>
+              {/* §9.1 ego network depth */}
+              <div className="flex items-center overflow-hidden rounded-md border border-border" role="group" aria-label={t("ego.title")}>
+                {([null, 1, 2, 3] as Array<null | 1 | 2 | 3>).map((d) => (
+                  <button
+                    key={String(d)}
+                    onClick={() => setEgoDepth(d)}
+                    disabled={d !== null && !selectedSlug}
+                    title={d === null ? t("ego.off") : `${t("ego.title")} ${fmtNum(d, lang)}`}
+                    className={`px-2 py-1.5 text-[10px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                      egoDepth === d
+                        ? "bg-foreground text-background"
+                        : "text-muted-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {d === null ? t("ego.off") : `×${fmtNum(d, lang)}`}
+                  </button>
+                ))}
+              </div>
+              {/* §9.1 new-in-7d pulse */}
+              <Button
+                variant={highlightNew ? "default" : "outline"}
+                size="icon"
+                className="size-8"
+                onClick={() => setHighlightNew((v) => !v)}
+                aria-label={t("graph.new7d")}
+                title={t("graph.new7d")}
+              >
+                <Sparkles className="size-4" />
+              </Button>
+              {/* §9.3 exports */}
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8"
+                onClick={exportJson}
+                aria-label={t("export.json")}
+                title={t("export.json")}
+              >
+                <FileJson className="size-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8"
+                onClick={exportCsv}
+                aria-label={t("export.csv")}
+                title={t("export.csv")}
+              >
+                <Download className="size-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8"
+                onClick={exportGraphml}
+                aria-label={t("export.graphml")}
+                title={t("export.graphml")}
+              >
+                <CircleDot className="size-4" />
+              </Button>
+              {/* §9.2 saved views */}
+              <Button
+                variant={viewsOpen ? "default" : "outline"}
+                size="icon"
+                className="size-8"
+                onClick={() => setViewsOpen((v) => !v)}
+                aria-label={t("views.title")}
+                title={t("views.title")}
+              >
+                <Bookmark className="size-4" />
+              </Button>
+              {/* §4.4 alerts bell with unread count */}
+              <Button
+                variant={alertsOpen ? "default" : "outline"}
+                size="icon"
+                className="relative size-8"
+                onClick={() => setAlertsOpen((v) => !v)}
+                aria-label={t("alerts.title")}
+                title={t("alerts.title")}
+              >
+                <Bell className="size-4" />
+                {(alerts?.filter((a) => !a.acknowledged).length ?? 0) > 0 && (
+                  <span className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-red-600 text-[8px] font-bold text-white tabular-nums">
+                    {fmtNum(alerts!.filter((a) => !a.acknowledged).length, lang)}
+                  </span>
+                )}
+              </Button>
             </div>
           </div>
 
@@ -1313,7 +1631,208 @@ export default function Dashboard() {
                 bundling={bundling}
                 lassoEnabled={lassoEnabled}
                 onLassoSelect={(slugs) => setLassoSlugs(slugs)}
+                egoDepth={egoDepth}
+                highlightNew={highlightNew}
+                dynamics={dynamicsMap}
               />
+            )}
+            {/* §9.1 matrix view modal */}
+            {matrixOpen && graph && (
+              <div className="absolute inset-6 z-30 flex flex-col rounded-lg border border-border bg-background/95 p-4 shadow-2xl backdrop-blur">
+                <div className="flex items-center justify-between pb-2">
+                  <h3 className="text-sm font-semibold">{t("matrix.title")}</h3>
+                  <Button variant="ghost" size="icon" className="size-7" onClick={() => setMatrixOpen(false)}>
+                    <X className="size-4" />
+                  </Button>
+                </div>
+                <div className="min-h-0 flex-1">
+                  <MatrixView
+                    actors={graph.actors}
+                    relations={graph.relations}
+                    onPickPair={(a, b) => {
+                      const rel = graph.relations.find(
+                        (r) =>
+                          (r.sourceSlug === a && r.targetSlug === b) ||
+                          (r.sourceSlug === b && r.targetSlug === a),
+                      );
+                      if (rel) {
+                        setSelectedEdge(rel);
+                        setSelectedSlug(null);
+                        setMatrixOpen(false);
+                      }
+                    }}
+                  />
+                </div>
+                {/* §3.3 structural readout */}
+                <div className="flex flex-wrap gap-x-6 gap-y-1 border-t border-border pt-2 text-[10px] text-muted-foreground">
+                  <span>
+                    {t("metrics.topBrokers")}:{" "}
+                    {centrality.length > 0
+                      ? centrality
+                          .slice()
+                          .sort((a, b) => b.betweenness - a.betweenness)
+                          .slice(0, 3)
+                          .map((c) => actorsBySlug.get(c.slug)?.name ?? c.slug)
+                          .join(" · ")
+                      : "…"}
+                  </span>
+                  {blocks.map((b) => (
+                    <span key={b.label}>
+                      {b.label}: {fmtNum(b.members.length, lang)} · {t("metrics.cohesionIn")} {fmtNum(b.cohesion, lang)}%
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* §4.4 alerts panel */}
+            {alertsOpen && (
+              <div className="absolute end-3 top-3 z-30 flex max-h-[80%] w-96 flex-col overflow-hidden rounded-lg border border-border bg-background/95 shadow-2xl backdrop-blur">
+                <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                  <h3 className="text-xs font-semibold">{t("alerts.title")}</h3>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 px-2 text-[10px]"
+                      onClick={() => void evaluateAlerts({})}
+                    >
+                      {t("alerts.evaluate")}
+                    </Button>
+                    <Button variant="ghost" size="icon" className="size-6" onClick={() => setAlertsOpen(false)}>
+                      <X className="size-3.5" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="min-h-0 flex-1 overflow-y-auto p-2">
+                  {alerts === undefined && (
+                    <div className="h-16 animate-pulse rounded-md bg-muted/60" />
+                  )}
+                  {alerts?.length === 0 && (
+                    <p className="p-3 text-[11px] text-muted-foreground">{t("alerts.empty")}</p>
+                  )}
+                  {alerts?.map((al) => {
+                    const rel = al.relationId
+                      ? graph?.relations.find((r) => r._id === al.relationId)
+                      : undefined;
+                    return (
+                      <div
+                        key={al._id}
+                        className={`mb-1.5 rounded-md border p-2.5 ${
+                          al.acknowledged ? "border-border/50 opacity-55" : "border-border"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-white ${
+                              al.severity === "HIGH"
+                                ? "bg-red-600"
+                                : al.severity === "MEDIUM"
+                                  ? "bg-amber-600"
+                                  : "bg-slate-500"
+                            }`}
+                          >
+                            {al.severity}
+                          </span>
+                          <span className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                            {al.rule} · {fmtAgo(al.ts, lang)}
+                          </span>
+                        </div>
+                        <p className="mt-1.5 text-xs font-medium leading-4">{al.title}</p>
+                        <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{al.detail}</p>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          {rel && (
+                            <button
+                              className="text-[10px] text-muted-foreground underline decoration-dotted hover:text-foreground"
+                              onClick={() => {
+                                setSelectedEdge(rel);
+                                setSelectedSlug(null);
+                                setAlertsOpen(false);
+                              }}
+                            >
+                              {t("alerts.openEvidence")}
+                            </button>
+                          )}
+                          {!al.acknowledged && (
+                            <button
+                              className="ms-auto text-[10px] text-muted-foreground hover:text-foreground"
+                              onClick={() => void ackAlert({ id: al._id })}
+                            >
+                              {t("alerts.ack")}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* §9.2 saved views popover */}
+            {viewsOpen && (
+              <div className="absolute start-3 top-3 z-30 w-80 overflow-hidden rounded-lg border border-border bg-background/95 shadow-2xl backdrop-blur">
+                <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                  <h3 className="text-xs font-semibold">{t("views.title")}</h3>
+                  <Button variant="ghost" size="icon" className="size-6" onClick={() => setViewsOpen(false)}>
+                    <X className="size-3.5" />
+                  </Button>
+                </div>
+                <div className="max-h-72 overflow-y-auto p-2">
+                  {savedViews === undefined && (
+                    <div className="h-10 animate-pulse rounded-md bg-muted/60" />
+                  )}
+                  {savedViews?.length === 0 && (
+                    <p className="p-2 text-[11px] text-muted-foreground">{t("views.empty")}</p>
+                  )}
+                  {savedViews?.map((v) => (
+                    <div key={v._id} className="flex items-center gap-1.5 rounded-md px-2 py-1.5 hover:bg-muted">
+                      <button
+                        className="min-w-0 flex-1 truncate text-start text-xs"
+                        onClick={() => applyView(v)}
+                        title={v.name}
+                      >
+                        {v.name}
+                      </button>
+                      <button
+                        className="shrink-0 text-muted-foreground hover:text-foreground"
+                        onClick={() => void deleteView({ id: v._id })}
+                        aria-label={t("btn.delete")}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1.5 border-t border-border p-2">
+                  <input
+                    value={viewDraft}
+                    onChange={(e) => setViewDraft(e.target.value)}
+                    placeholder={t("views.namePlaceholder")}
+                    className="h-8 min-w-0 flex-1 rounded-md border border-border bg-card px-2 text-xs outline-none placeholder:text-muted-foreground focus:border-foreground/40"
+                  />
+                  <Button
+                    size="sm"
+                    className="h-8 px-2.5 text-[11px]"
+                    disabled={!viewDraft.trim()}
+                    onClick={() => {
+                      void saveView({
+                        name: viewDraft.trim(),
+                        filters: JSON.stringify({
+                          kinds: [...kindFilter],
+                          search,
+                          focus: focusMode,
+                          hull: hullBy,
+                        }),
+                        timeSlice: playbackTs ?? undefined,
+                      });
+                      setViewDraft("");
+                    }}
+                  >
+                    {t("views.save")}
+                  </Button>
+                </div>
+              </div>
             )}
             {/* Lasso group analysis panel */}
             <GroupPanel

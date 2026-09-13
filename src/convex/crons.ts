@@ -9,6 +9,8 @@ const cronRef: any = internal.rssIngest._cronRefresh;
 const compactRef: any = internal.graph.compactChangeLog;
 const backfillRef: any = internal.translations.backfill;
 const articlesRef: any = internal.articles.autoTranslateBatch;
+const alertsRef: any = internal.alerts;
+const snapshotRef: any = internal.alerts;
 crons.interval(
   "Refresh think tank RSS feeds",
   { hours: 6 },
@@ -37,6 +39,20 @@ crons.hourly(
   { minuteUTC: 15 },
   articlesRef,
   { limit: 6 },
+);
+
+// Alert engine: rule-based evaluation over the stored graph, deduped per
+// 12h window. Also refreshes daily actor snapshots for trend analysis.
+crons.interval(
+  "Evaluate alert rules",
+  { hours: 4 },
+  (alertsRef as { evaluate: any }).evaluate,
+);
+
+crons.daily(
+  "Write actor snapshots",
+  { hourUTC: 0, minuteUTC: 20 },
+  (snapshotRef as { writeSnapshots: any }).writeSnapshots,
 );
 
 export default crons;

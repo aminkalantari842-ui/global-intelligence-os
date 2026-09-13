@@ -204,6 +204,9 @@ export default function ActorGraph({
   bundling = false,
   lassoEnabled = false,
   onLassoSelect,
+  egoDepth = null,
+  highlightNew = false,
+  dynamics,
 }: ActorGraphProps) {
   const { t, lang } = useI18n();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -257,7 +260,34 @@ export default function ActorGraph({
       }
       const visibleActors = pb === null ? actors : actors.filter((a) => liveSlugs.has(a.slug));
 
-      const nextNodes: ActorNode[] = visibleActors
+      // §9.1 Ego network: restrict to N hops around the selected actor.
+      let scopedActors = visibleActors;
+      if (egoDepth && selectedSlug) {
+        const neighborMap = new Map<string, Set<string>>();
+        for (const r of timeRelations) {
+          if (!neighborMap.has(r.sourceSlug)) neighborMap.set(r.sourceSlug, new Set());
+          if (!neighborMap.has(r.targetSlug)) neighborMap.set(r.targetSlug, new Set());
+          neighborMap.get(r.sourceSlug)!.add(r.targetSlug);
+          neighborMap.get(r.targetSlug)!.add(r.sourceSlug);
+        }
+        let frontier = new Set([selectedSlug]);
+        const allowed = new Set([selectedSlug]);
+        for (let hop = 0; hop < egoDepth; hop++) {
+          const next: Set<string> = new Set();
+          for (const s of frontier) {
+            for (const nb of neighborMap.get(s) ?? []) {
+              if (!allowed.has(nb)) {
+                allowed.add(nb);
+                next.add(nb);
+              }
+            }
+          }
+          frontier = next;
+        }
+        scopedActors = visibleActors.filter((a) => allowed.has(a.slug));
+      }
+
+      const nextNodes: ActorNode[] = scopedActors
         .map((a) => {
           const prevNode = prev.get(a.slug);
           return {
@@ -374,7 +404,7 @@ export default function ActorGraph({
       simulationRef.current = sim;
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [actors, filteredRelations, playbackTs, layout, bundling],
+    [actors, filteredRelations, playbackTs, layout, bundling, egoDepth, selectedSlug],
   );
 
   // ── Rendering ───────────────────────────────────────────────────────────
@@ -579,6 +609,39 @@ export default function ActorGraph({
         ctx.fill();
       }
 
+      // §3.2 trajectory glyph — slope direction at the curve midpoint
+      // (improving ↗ / stable → / declining ↘), drawn only when dynamics
+      // data exists and the trend is non-trivial.
+      const dyn = dynamics?.[rel._id];
+      if (lod >= 2 && dyn && alpha > 0.12) {
+        const p = qPoint(s0, c, t0, 0.38);
+        const tg = qTangent(s0, c, t0, 0.38);
+        const tl = Math.hypot(tg.x, tg.y) || 1;
+        const ux = tg.x / tl;
+        const uy = tg.y / tl;
+        const off = 12 / k + 3;
+        const gx = p.x + (-uy / tl) * off;
+        const gy = p.y + (ux / tl) * off;
+        ctx.globalAlpha = Math.min(1, alpha + 0.2);
+        ctx.strokeStyle = P.ink;
+        ctx.lineWidth = 1.4 / k + 0.3;
+        ctx.beginPath();
+        if (dyn.trend === "stable") {
+          ctx.moveTo(gx - 4 / k, gy);
+          ctx.lineTo(gx + 4 / k, gy);
+        } else {
+          const dir = dyn.trend === "improving" ? -1 : 1;
+          ctx.moveTo(gx - 4 / k, gy + dir * 4 / k);
+          ctx.lineTo(gx + 4 / k, gy - dir * 4 / k);
+          // arrowhead
+          ctx.moveTo(gx + 4 / k, gy - dir * 4 / k);
+          ctx.lineTo(gx + 1 / k, gy - dir * 4.5 / k);
+          ctx.moveTo(gx + 4 / k, gy - dir * 4 / k);
+          ctx.lineTo(gx + 4.5 / k, gy - dir * 1 / k);
+        }
+        ctx.stroke();
+      }
+
       // Event markers — recent observed activity on this edge, honoring the
       // time-scrub window. Fresh (≤7d) markers are solid, older half-toned.
       const marker = markers?.[rel._id];
@@ -653,6 +716,23 @@ export default function ActorGraph({
         ctx.arc(node.x, node.y, r + 8, 0, Math.PI * 2);
         ctx.strokeStyle = P.ink;
         ctx.globalAlpha = 0.5;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.globalAlpha = dimmed ? 0.28 : 1;
+      }
+
+      // §9.1 «new in 7d» badge — small accent dot top-right for actors whose
+      // firstSeen falls inside the last week.
+      if (highlightNew && !dimmed && now - node.actor.firstSeen <= 7 * 86_400_000) {
+        ctx.beginPath();
+        ctx.arc(node.x + r * 0.72, node.y - r * 0.72, 3.6, 0, Math.PI * 2);
+        ctx.fillStyle = P.ink;
+        ctx.globalAlpha = 0.9;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(node.x + r * 0.72, node.y - r * 0.72, 6.5, 0, Math.PI * 2);
+        ctx.strokeStyle = P.ink;
+        ctx.globalAlpha = 0.35;
         ctx.lineWidth = 1;
         ctx.stroke();
         ctx.globalAlpha = dimmed ? 0.28 : 1;
@@ -851,7 +931,7 @@ export default function ActorGraph({
       ctx.strokeRect(v0.x, v0.y, vw * sc, vh * sc);
       ctx.globalAlpha = 1;
     }
-  }, [selectedSlug, focusMode, lang, markers, markerWindowDays, coverage, hullBy, showMinimap]);
+  }, [selectedSlug, focusMode, lang, markers, markerWindowDays, coverage, hullBy, showMinimap, dynamics, highlightNew]);
 
   // Redraw on selection/hover changes
   useEffect(() => {

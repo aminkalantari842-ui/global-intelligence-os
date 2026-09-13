@@ -337,7 +337,10 @@ export function dynamicsFromMarkers(
   const out: Record<string, EdgeTrajectory> = {};
   for (const [id, m] of Object.entries(markers)) {
     if (!m.series || m.series.length < 2) continue;
-    out[id] = edgeDynamics(m.series, now);
+    out[id] = edgeDynamics(
+      m.series.map((p) => ({ timestamp: p.ts, type: p.type })),
+      now,
+    );
   }
   return out;
 }
