@@ -8,6 +8,46 @@ import { v } from "convex/values";
 const DAY = 86_400_000;
 const BUCKET_MS = 12 * 3_600_000;
 
+// §6.3/§6.4 ladder & tripwire helpers — fixed rubric, identical to the
+// client copy in src/components/graph/escalation.ts (single source of truth
+// duplicated intentionally: Convex runtime cannot import client modules).
+const EVENT_RUNG: Record<string, number> = {
+  STATEMENT: 1, REPORT: 1, POSTURE: 2, ELECTION: 1, REFERENDUM: 1,
+  MEETING: 1, DIPLOMATIC_SUMMIT: 1, AGREEMENT: 0, TREATY_SIGNED: 0,
+  AMBASSADOR_RECALL: 3, RELATIONS_SEVERED: 4, RECOGNITION: 1,
+  WITHDRAWAL: 3, SANCTION: 3, SEIZURE: 4, BLOCKADE: 5,
+  MILITARY_EXERCISE: 5, MISSILE_TEST: 5, TRANSFER: 4, CYBER_ATTACK: 5, STRIKE: 6,
+};
+
+function eventRung(type: string, explicit?: number): number {
+  return explicit ?? EVENT_RUNG[type] ?? 1;
+}
+
+/** Max rung across recent events involving an actor. */
+function actorRung(events: Array<{ timestamp: number; type: string; escalationRung?: number }>, now: number): number {
+  const cutoff = now - 90 * DAY;
+  let rung = 0;
+  for (const e of events) {
+    if (e.timestamp < cutoff) continue;
+    const r = eventRung(e.type, e.escalationRung);
+    if (r > rung) rung = r;
+  }
+  return rung;
+}
+
+/** Declared condition → trigger rung (keyword table, deterministic). */
+function tripwireTriggerRung(condition: string): number {
+  const c = condition.toLowerCase();
+  if (/strike|attack|invade|war|military action|حمله|جنگ/.test(c)) return 6;
+  if (/blockade|siege|quarantine|محاصره/.test(c)) return 5;
+  if (/cyber|سایبری/.test(c)) return 5;
+  if (/enrich|nuclear|weapon|هسته|موشک/.test(c)) return 5;
+  if (/seizure|capture|توقیف/.test(c)) return 4;
+  if (/sanction|embargo|تحریم/.test(c)) return 3;
+  if (/expel|recall|diplomat|اخراج|فراخوان/.test(c)) return 3;
+  return 4;
+}
+
 interface RelRow {
   _id: any;
   sourceSlug: string;
@@ -163,6 +203,62 @@ export const evaluate = mutation({
           [slug],
           `Multi-front activity: ${slug}`,
           `${n} adversarial edges active within 7 days.`,
+        );
+      }
+    }
+
+    // ── Rule 6: ladder climb (§6.3, MEDIUM) ──
+    // Actor's recent-event rung rose ≥2 within 90d — rapid escalation.
+    const eventsByActor = new Map<string, Array<{ timestamp: number; type: string; escalationRung?: number }>>();
+    {
+      const relById = new Map(relations.map((r) => [String(r._id), r]));
+      for (const e of events) {
+        const rel = relById.get(String(e.relationId));
+        if (!rel) continue;
+        const row = { timestamp: e.timestamp, type: e.type, escalationRung: e.escalationRung };
+        if (!eventsByActor.has(rel.sourceSlug)) eventsByActor.set(rel.sourceSlug, []);
+        if (!eventsByActor.has(rel.targetSlug)) eventsByActor.set(rel.targetSlug, []);
+        eventsByActor.get(rel.sourceSlug)!.push(row);
+        eventsByActor.get(rel.targetSlug)!.push(row);
+      }
+    }
+    for (const [slug, evts] of eventsByActor) {
+      const recent = evts.filter((e) => now - e.timestamp <= 30 * DAY);
+      const prior = evts.filter((e) => now - e.timestamp > 30 * DAY && now - e.timestamp <= 90 * DAY);
+      const rRecent = recent.length ? Math.max(...recent.map((e) => eventRung(e.type, e.escalationRung))) : 0;
+      const rPrior = prior.length ? Math.max(...prior.map((e) => eventRung(e.type, e.escalationRung))) : 0;
+      if (rRecent - rPrior >= 2) {
+        await insert(
+          "ladder_climb",
+          "MEDIUM",
+          [slug],
+          `Escalation ladder climb: ${slug}`,
+          `Rung moved ${rPrior} → ${rRecent} over 90 days (fixed rubric over observed events).`,
+        );
+      }
+    }
+
+    // ── Rule 7: tripwire proximity (§6.4, HIGH when at threshold) ──
+    const tripwires = await ctx.db.query("tripwires").collect();
+    for (const tw of tripwires) {
+      const current = actorRung(eventsByActor.get(tw.actorSlug) ?? [], now);
+      const trigger = tripwireTriggerRung(tw.condition);
+      const distance = trigger - current;
+      if (distance <= 0) {
+        await insert(
+          "tripwire_at_threshold",
+          "HIGH",
+          [tw.actorSlug],
+          `Tripwire at threshold: ${tw.actorSlug}`,
+          `Declared condition approached: "${tw.condition.slice(0, 120)}" → ${tw.action.slice(0, 120)}`,
+        );
+      } else if (distance === 1) {
+        await insert(
+          "tripwire_near",
+          "MEDIUM",
+          [tw.actorSlug],
+          `Tripwire one rung away: ${tw.actorSlug}`,
+          `Condition "${tw.condition.slice(0, 120)}" — one escalation rung from the declared trigger.`,
         );
       }
     }

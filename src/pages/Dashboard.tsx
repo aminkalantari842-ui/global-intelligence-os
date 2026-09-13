@@ -1,4 +1,5 @@
 import { useAction, useMutation, useQuery } from "convex/react";
+import type { useQuery as useQueryType } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useAuth } from "@/hooks/use-auth";
@@ -15,12 +16,23 @@ import {
   computeRisk,
   fmtAgo,
   fmtNum,
+  toFaDigits,
   topByPosition,
   topByRisk,
   type ActorScoreRow,
 } from "@/components/graph/metrics";
 import { dynamicsFromMarkers, computeCentrality, detectBlocks } from "@/components/graph/network";
 import MatrixView from "@/components/graph/MatrixView";
+import {
+  LADDER_RUNGS,
+  MAX_RUNG,
+  currentRung,
+  rungVelocity,
+  buildReactionChain,
+  titForTat,
+  tripwireProximity,
+  type ChainEvent,
+} from "@/components/graph/escalation";
 import {
   AiAnalystBox,
   ChangeFeed,
@@ -233,6 +245,239 @@ function EventSourceRow({
   );
 }
 
+/**
+ * §6.1–6.4 Escalation panel — escalation ladder, documented reaction chains,
+ * and tripwire proximity for the selected edge. Everything renders as a direct
+ * projection of stored events; assumed (sequence-based) links are visually
+ * distinct from documented ones.
+ */
+function EscalationPanel({
+  relation,
+  events,
+  now,
+}: {
+  relation: GraphRelation;
+  events: NonNullable<
+    ReturnType<typeof useQueryType<typeof api.graph.getRelationEvents>>
+  >;
+  now: number;
+}) {
+  const { t, lang } = useI18n();
+  const tripwires = useQuery(api.graph.getTripwires, {});
+  const addTripwire = useMutation(api.graph.addTripwire);
+  const deleteTripwire = useMutation(api.graph.deleteTripwire);
+  const [twOpen, setTwOpen] = useState(false);
+  const [twCondition, setTwCondition] = useState("");
+  const [twAction, setTwAction] = useState("");
+  const [twSource, setTwSource] = useState("");
+
+  const rung = currentRung(events ?? [], now);
+  const velocity = rungVelocity(events ?? [], now);
+
+  // Reaction chains: side A = source, side B = target (by actor of the event
+  // text position is unknown, so assign alternating by response structure).
+  const chainEvents: ChainEvent[] = (events ?? []).map((e) => ({
+    _id: String(e._id),
+    timestamp: e.timestamp,
+    type: e.type,
+    escalationRung: e.escalationRung,
+    inResponseTo: e.inResponseTo ? String(e.inResponseTo) : undefined,
+    title: e.title,
+    actorSide: "A" as const,
+  }));
+  const steps = buildReactionChain(chainEvents).filter((s) => s.documented);
+  const tat = titForTat(steps);
+
+  // Tripwire proximity across both actors of this edge.
+  const eventsByActor = new Map<string, ChainEvent[]>();
+  const rows = events ?? [];
+  for (const e of rows) {
+    for (const slug of [relation.sourceSlug, relation.targetSlug]) {
+      const list = eventsByActor.get(slug) ?? [];
+      list.push({
+        _id: String(e._id),
+        timestamp: e.timestamp,
+        type: e.type,
+        escalationRung: e.escalationRung,
+        title: e.title,
+        actorSide: slug === relation.sourceSlug ? "A" : "B",
+      });
+      eventsByActor.set(slug, list);
+    }
+  }
+  const prox = tripwireProximity(
+    (tripwires ?? []).filter(
+      (tw) => tw.actorSlug === relation.sourceSlug || tw.actorSlug === relation.targetSlug,
+    ),
+    eventsByActor,
+    now,
+  );
+
+  return (
+    <div className="px-4 pt-3">
+      {/* Ladder gauge */}
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          {t("ladder.title")}
+        </p>
+        <span className="text-[10px] tabular-nums text-muted-foreground">
+          {t("ladder.rung")} {fmtNum(rung, lang)}/{fmtNum(MAX_RUNG, lang)}
+          {velocity > 0 ? ` ▲${fmtNum(velocity, lang)}` : velocity < 0 ? ` ▼${fmtNum(-velocity, lang)}` : ""}
+        </span>
+      </div>
+      <div className="mt-1.5 flex items-end gap-1" role="img" aria-label={t("ladder.title")}>
+        {LADDER_RUNGS.slice(1).map((r) => {
+          const reached = r.rung <= rung;
+          return (
+            <div key={r.rung} className="flex min-w-0 flex-1 flex-col items-center gap-0.5" title={t(r.labelKey)}>
+              <div
+                className={`w-full rounded-t-sm transition-all ${reached ? "bg-foreground" : "bg-muted"}`}
+                style={{ height: 4 + r.rung * 3 }}
+              />
+              <span className={`text-[8px] tabular-nums ${reached ? "font-bold" : "text-muted-foreground"}`}>
+                {lang === "fa" ? toFaDigits(r.rung) : r.rung}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+        {t(LADDER_RUNGS[rung]?.labelKey ?? "ladder.r0")}
+      </p>
+
+      {/* Reaction chains (documented only — rule: assumptions never hidden but labeled) */}
+      {steps.length > 0 && (
+        <>
+          <Separator className="my-3" />
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              {t("chain.title")}
+            </p>
+            <span className="text-[10px] tabular-nums text-muted-foreground">
+              {t("chain.titfortat")} {fmtNum(tat.proportionate, lang)}/{fmtNum(tat.documented, lang)}
+            </span>
+          </div>
+          <ol className="mt-1.5 space-y-1">
+            {steps.slice(0, 6).map((s) => (
+              <li key={s.event._id} className="rounded-md border border-border/60 px-2 py-1.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-muted-foreground">→</span>
+                  <span className="min-w-0 flex-1 truncate text-[11px]">{s.event.title}</span>
+                  <span
+                    className={`shrink-0 rounded px-1 py-0.5 text-[8px] uppercase tracking-wider ${
+                      s.documented ? "bg-muted text-foreground" : "border border-dashed border-border text-muted-foreground"
+                    }`}
+                  >
+                    {s.documented
+                      ? s.lagDays !== undefined
+                        ? `${t("chain.lag")} ${fmtNum(s.lagDays, lang)}${lang === "fa" ? "ر" : "d"}`
+                        : t("chain.documented")
+                      : t("chain.assumed")}
+                  </span>
+                </div>
+                {s.responseTo && (
+                  <p className="mt-0.5 truncate text-[9px] text-muted-foreground">
+                    ↳ {t("chain.inResponseTo")} {s.responseTo.title}
+                  </p>
+                )}
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+
+      {/* Tripwires of the two actors */}
+      <Separator className="my-3" />
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          {t("tw.title")}
+        </p>
+        <button
+          className="text-[10px] text-muted-foreground underline decoration-dotted hover:text-foreground"
+          onClick={() => setTwOpen((v) => !v)}
+        >
+          {twOpen ? t("btn.cancel") : t("tw.add")}
+        </button>
+      </div>
+      {twOpen && (
+        <div className="mt-1.5 space-y-1 rounded-md border border-border p-2">
+          <input
+            value={twCondition}
+            onChange={(e) => setTwCondition(e.target.value)}
+            placeholder={t("tw.condition")}
+            dir="auto"
+            className="h-7 w-full rounded border border-border bg-card px-2 text-[11px] outline-none focus:border-foreground/40"
+          />
+          <input
+            value={twAction}
+            onChange={(e) => setTwAction(e.target.value)}
+            placeholder={t("tw.action")}
+            dir="auto"
+            className="h-7 w-full rounded border border-border bg-card px-2 text-[11px] outline-none focus:border-foreground/40"
+          />
+          <input
+            value={twSource}
+            onChange={(e) => setTwSource(e.target.value)}
+            placeholder={t("tw.source")}
+            dir="auto"
+            className="h-7 w-full rounded border border-border bg-card px-2 text-[11px] outline-none focus:border-foreground/40"
+          />
+          <Button
+            size="sm"
+            className="h-7 w-full text-[10px]"
+            disabled={!twCondition.trim() || !twAction.trim() || !twSource.trim()}
+            onClick={() => {
+              void addTripwire({
+                actorSlug: relation.sourceSlug,
+                condition: twCondition,
+                action: twAction,
+                sourceRef: twSource,
+              });
+              setTwCondition("");
+              setTwAction("");
+              setTwSource("");
+              setTwOpen(false);
+            }}
+          >
+            {t("tw.save")}
+          </Button>
+        </div>
+      )}
+      {tripwires === undefined && <div className="mt-1.5 h-8 animate-pulse rounded bg-muted/50" />}
+      {prox.length === 0 && tripwires !== undefined && (
+        <p className="mt-1 text-[10px] leading-4 text-muted-foreground">{t("tw.empty")}</p>
+      )}
+      <div className="mt-1.5 space-y-1">
+        {prox.map(({ tripwire: tw, currentRung: cr, triggerRung: tr, distance }) => (
+          <div key={tw._id} className="rounded-md border border-border/70 px-2 py-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <span className="min-w-0 flex-1 truncate text-[11px]" dir="auto">
+                {tw.condition}
+              </span>
+              <span
+                className={`shrink-0 rounded px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wider text-white ${
+                  distance <= 0 ? "bg-red-600" : distance === 1 ? "bg-amber-600" : "bg-slate-500"
+                }`}
+              >
+                {distance <= 0 ? t("tw.at") : distance === 1 ? t("tw.near") : `${t("tw.rung")} ${fmtNum(distance, lang)}`}
+              </span>
+            </div>
+            <p className="mt-0.5 text-[9px] text-muted-foreground">
+              {tw.actorSlug} · {t("ladder.rung")} {fmtNum(cr, lang)} → {fmtNum(tr, lang)} · {tw.sourceRef.slice(0, 60)}
+            </p>
+            <button
+              className="mt-0.5 text-[9px] text-muted-foreground hover:text-foreground"
+              onClick={() => void deleteTripwire({ id: tw._id as Id<"tripwires"> })}
+            >
+              {t("btn.delete")}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function EdgePanel({
   relation,
   actorsBySlug,
@@ -271,6 +516,10 @@ function EdgePanel({
       <div className="px-4 pt-3">
         <p className="text-xs leading-5 text-muted-foreground">{relation.summary}</p>
       </div>
+
+      {events !== undefined && (
+        <EscalationPanel relation={relation} events={events} now={Date.now()} />
+      )}
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-3 px-4 pt-4 text-xs">
         <div>

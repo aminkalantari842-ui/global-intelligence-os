@@ -3,6 +3,44 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { SEED_ACTORS, SEED_RELATIONSHIPS } from "./data/seed";
 
+// ─── §6.4 Tripwires (declared actor thresholds, stored as structured data) ──
+
+export const getTripwires = query({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db.query("tripwires").withIndex("by_actor").collect();
+  },
+});
+
+export const addTripwire = mutation({
+  args: {
+    actorSlug: v.string(),
+    condition: v.string(),
+    action: v.string(),
+    sourceRef: v.string(),
+  },
+  handler: async (ctx, { actorSlug, condition, action, sourceRef }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("NOT_AUTHENTICATED");
+    return await ctx.db.insert("tripwires", {
+      actorSlug,
+      condition: condition.trim().slice(0, 500),
+      action: action.trim().slice(0, 500),
+      sourceRef: sourceRef.trim().slice(0, 300),
+      ts: Date.now(),
+    });
+  },
+});
+
+export const deleteTripwire = mutation({
+  args: { id: v.id("tripwires") },
+  handler: async (ctx, { id }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("NOT_AUTHENTICATED");
+    await ctx.db.delete(id);
+  },
+});
+
 // ─── Canonical content queries ─────────────────────────────────────────────
 // Every query here is deterministic and read-only. Confidence and weight are
 // computed at ingestion time by the scoring model — never at render time by
