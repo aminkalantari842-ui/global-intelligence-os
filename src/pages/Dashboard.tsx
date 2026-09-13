@@ -53,6 +53,7 @@ import {
   GroupPanel,
   WatchButton,
 } from "@/components/graph/panels";
+import { ExpansionPanel } from "@/components/graph/ExpansionPanel";
 import {
   ArrowLeft,
   Bell,
@@ -1128,6 +1129,11 @@ function ActorPanel({
       <div className="space-y-2.5 px-4 pt-4">
         <CoverageBlock actorSlug={actor.slug} />
         <AiAnalystBox actor={actor} relations={relations} actorsBySlug={actorsBySlug} />
+        <ExpansionPanel
+          actor={actor}
+          actorsBySlug={actorsBySlug}
+          allRelations={relations}
+        />
       </div>
 
       <Separator className="my-4" />
