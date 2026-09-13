@@ -212,6 +212,16 @@ export const deleteHighlight = mutation({
 
 // ─── Deterministic analytics for headers & map strip ────────────────────────
 
+/** Triage chip counts for the board toolbar. */
+export const getTriageCounts = query({
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("readingStates").collect();
+    const counts = { UNREAD: 0, READING: 0, READ: 0 };
+    for (const r of rows) counts[r.triage] += 1;
+    return counts;
+  },
+});
+
 /** 14-day daily counts per topic for header sparklines. */
 export const getTopicTrends = query({
   args: { topics: v.array(v.string()), days: v.optional(v.number()) },

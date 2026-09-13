@@ -116,6 +116,22 @@
   --font-sans: "Vazirmatn", ui-sans-serif, system-ui, sans-serif;
 }
 
+/* Board ticker — continuous horizontal news crawl (RTL-friendly). */
+@keyframes ticker-rtl {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(50%);
+  }
+}
+.animate-ticker {
+  animation: ticker-rtl 70s linear infinite;
+}
+.animate-ticker:hover {
+  animation-play-state: paused;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

@@ -9,9 +9,14 @@ import { api } from "@/convex/_generated/api";
 import { useI18n } from "@/i18n/context";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowDownWideNarrow,
+  CheckCircle2,
   ExternalLink,
+  Eye,
+  EyeOff,
   FileText,
   Globe2,
+  History,
   LayoutList,
   Loader2,
   Newspaper,
@@ -20,6 +25,7 @@ import {
   Play,
   Rows2,
   Rows3,
+  Search,
   Table2,
   X,
 } from "lucide-react";
@@ -73,6 +79,8 @@ function TopicColumn({
   pinned,
   focused,
   viewMode,
+  triageFilter,
+  sortMode,
   onFocus,
   onPin,
   onDragStart,
@@ -91,6 +99,8 @@ function TopicColumn({
   pinned: boolean;
   focused: boolean;
   viewMode: ViewMode;
+  triageFilter: "ALL" | "UNREAD" | "READING" | "READ";
+  sortMode: "recent" | "priority";
   onFocus: () => void;
   onPin: () => void;
   onDragStart: () => void;
@@ -104,7 +114,12 @@ function TopicColumn({
   const { t, lang } = useI18n();
   const [limit, setLimit] = useState(PAGE);
   const [loadingMore, setLoadingMore] = useState(false);
-  const items = useQuery(api.articles.getTopicFeed, { topic: topicId, limit });
+  const items = useQuery(api.articles.getTopicFeedV3, {
+    topic: topicId,
+    limit,
+    triage: triageFilter === "ALL" ? undefined : triageFilter,
+    sort: sortMode,
+  });
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
 
@@ -188,6 +203,8 @@ function TopicColumn({
         {items?.map((item, idx) => {
           const saved = inList.has(item._id);
           const reading = item.hasArticle;
+          const isRead = item.triage === "READ";
+          const isReading = item.triage === "READING";
           return (
             <div
               key={item._id}
@@ -200,10 +217,31 @@ function TopicColumn({
                 className={`block w-full text-start ${compact ? "px-2.5 py-1.5" : "px-3 py-2.5"}`}
               >
                 <p
-                  className={`font-medium leading-5 ${compact ? "line-clamp-1 text-[11px]" : "line-clamp-3 text-[11.5px]"}`}
+                  className={`font-medium leading-5 ${compact ? "line-clamp-1 text-[11px]" : "line-clamp-3 text-[11.5px]"} ${
+                    isRead ? "text-muted-foreground/60" : ""
+                  }`}
                 >
+                  {isRead && <CheckCircle2 className="me-1 inline size-2.5 text-emerald-600/70" />}
                   {item.title}
                 </p>
+                {isReading && (
+                  <div className="mt-1 h-0.5 w-full overflow-hidden rounded bg-muted">
+                    <div className="h-full bg-sky-500" style={{ width: `${Math.round(item.progress * 100)}%` }} />
+                  </div>
+                )}
+                {sortMode === "priority" && (
+                  <span
+                    className={`absolute start-1 top-1/2 -translate-y-1/2 rounded-sm px-1 text-[7px] font-bold tabular-nums ${
+                      item.priority >= 60
+                        ? "bg-rose-500/15 text-rose-600"
+                        : item.priority >= 35
+                          ? "bg-amber-500/15 text-amber-600"
+                          : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {item.priority}
+                  </span>
+                )}
                 {!compact && !isList && (
                   <p className="mt-0.5 line-clamp-1 text-[10px] leading-4 text-muted-foreground/80">
                     {item.summary}
@@ -211,6 +249,7 @@ function TopicColumn({
                 )}
                 <p className={`mt-1 flex items-center gap-1.5 text-[9px] text-muted-foreground`}>
                   {reading && <FileText className="size-2.5 shrink-0 text-emerald-600" />}
+                  {sortMode === "priority" && <span className="w-2 shrink-0" />}
                   <span className="truncate">{item.thinkTankSlug}</span>
                   <span className="shrink-0 tabular-nums">
                     {new Date(item.publishedAt).toLocaleDateString(lang === "fa" ? "fa-IR" : "en-GB", {
@@ -281,6 +320,8 @@ export default function TopicBoard() {
   const layout = useQuery(api.reading.getLayout, {});
   const lists = useQuery(api.reading.listReadingLists);
   const resumeFeed = useQuery(api.reading.getResumeFeed, { limit: 4 });
+  const ticker = useQuery(api.articles.getTicker, { limit: 14 });
+  const triageCounts = useQuery(api.reading.getTriageCounts);
   const saveLayout = useMutation(api.reading.saveLayout);
   const createList = useMutation(api.reading.createList);
   const toggleItem = useMutation(api.reading.toggleListItem);
@@ -298,6 +339,16 @@ export default function TopicBoard() {
   const [listName, setListName] = useState("");
   const [activeListId, setActiveListId] = useState<string | null>(null);
   const resizeTimer = useRef<number | null>(null);
+  const [triageFilter, setTriageFilter] = useState<"ALL" | "UNREAD" | "READING" | "READ">("ALL");
+  const [sortMode, setSortMode] = useState<"recent" | "priority">("recent");
+  const [searchQ, setSearchQ] = useState("");
+  const searchTimer = useRef<number | null>(null);
+  // Reactive full-text search — the query self-updates as the user types.
+  const searchResults = useQuery(
+    api.articles.searchFullText,
+    searchQ.trim().length >= 3 ? { q: searchQ, limit: 10 } : "skip",
+  );
+  const searching = searchQ.trim().length >= 3 && searchResults === undefined;
 
   // Hydrate persisted layout once.
   useEffect(() => {
@@ -436,12 +487,82 @@ export default function TopicBoard() {
   // Keep the board in Persian typography regardless of UI language toggle.
   const boardDir = "rtl";
 
+  // Similar-article links (from the reader) open through the same pipeline.
+  useEffect(() => {
+    const onOpenPub = (e: Event) => {
+      const pubId = (e as CustomEvent<string>).detail;
+      if (!pubId) return;
+      const key = pubId;
+      setActiveKey(key);
+      setTabs((prev) => {
+        if (prev.some((tb) => tb.key === key)) return prev;
+        const tab: EnhancedReaderTab = { key, pubId, title: "…", loading: true };
+        void openArticle({ pubId: pubId as never })
+          .then((data) => {
+            setTabs((cur) =>
+              cur.map((tb) =>
+                tb.key === key
+                  ? {
+                      ...tb,
+                      loading: false,
+                      title: data ? data.titleFa : tb.title,
+                      data: data ? { ...data, textEn: undefined } : undefined,
+                    }
+                  : tb,
+              ),
+            );
+          })
+          .catch(() =>
+            setTabs((cur) => cur.map((tb) => (tb.key === key ? { ...tb, loading: false, error: t("board.readerError") } : tb))),
+          );
+        return [...prev.slice(-5), tab];
+      });
+    };
+    window.addEventListener("board:open-pub", onOpenPub);
+    return () => window.removeEventListener("board:open-pub", onOpenPub);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openArticle]);
+
   useEffect(() => {
     void lang;
   }, [lang]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2" dir={boardDir}>
+      {/* Live ticker — just-published strip (paused on hover) */}
+      {ticker && ticker.length > 0 && (
+        <div className="flex h-7 shrink-0 items-center overflow-hidden rounded-md border border-border bg-card">
+          <span className="flex h-full shrink-0 items-center gap-1 bg-rose-600 px-2 text-[9px] font-bold uppercase tracking-widest text-white">
+            <History className="size-3 animate-pulse" /> {t("board.ticker.live")}
+          </span>
+          <div className="relative min-w-0 flex-1 overflow-hidden">
+            <div className="flex w-max animate-ticker gap-6 whitespace-nowrap px-4">
+              {[...ticker, ...ticker].map((r, i) => (
+                <button
+                  key={`${r._id}:${i}`}
+                  onClick={() =>
+                    onOpenItem({
+                      _id: r._id,
+                      title: r.title,
+                      url: "",
+                      summary: "",
+                      publishedAt: r.publishedAt,
+                      thinkTankSlug: r.thinkTankSlug,
+                      topicFa: r.topicFa,
+                      hasArticle: false,
+                    })
+                  }
+                  className="flex items-center gap-1.5 text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  <span className="rounded-sm bg-muted px-1 text-[8px] text-foreground/70">{r.topicFa}</span>
+                  <span>{r.title}</span>
+                  <span className="text-[8px] text-muted-foreground/60">· {r.thinkTankSlug}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       {/* Toolbar row: view density, lists, resume */}
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
@@ -504,7 +625,85 @@ export default function TopicBoard() {
             }}
           />
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
+          {/* Triage filter chips */}
+          <div className="flex rounded-md border border-border p-0.5">
+            {(["ALL", "UNREAD", "READING", "READ"] as const).map((f) => (
+              <button
+                key={f}
+                onClick={() => setTriageFilter(f)}
+                className={`rounded px-1.5 py-0.5 text-[9px] font-medium transition-colors ${
+                  triageFilter === f
+                    ? "bg-foreground text-background"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {t(`board.triage.${f.toLowerCase()}`)}
+                {f !== "ALL" && triageCounts && (
+                  <span className="ms-1 tabular-nums opacity-60">
+                    {lang === "fa" ? toFaDigits(triageCounts[f]) : triageCounts[f]}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          {/* Sort toggle */}
+          <button
+            onClick={() => setSortMode((m) => (m === "recent" ? "priority" : "recent"))}
+            className={`flex items-center gap-1 rounded-md border px-1.5 py-1 text-[9px] transition-colors ${
+              sortMode === "priority"
+                ? "border-rose-500/60 bg-rose-500/10 text-rose-600"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+            title={t("board.sort.priority")}
+          >
+            <ArrowDownWideNarrow className="size-3" />
+            {sortMode === "priority" ? t("board.sort.priority") : t("board.sort.recent")}
+          </button>
+          {/* Full-text search */}
+          <div className="relative">
+            <Search className="absolute start-2 top-1.5 size-3 text-muted-foreground" />
+            <input
+              value={searchQ}
+              onChange={(e) => setSearchQ(e.target.value)}
+              placeholder={t("board.searchFull")}
+              className="h-7 w-44 rounded-md border border-border bg-card ps-7 pe-2 text-[11px] outline-none placeholder:text-muted-foreground"
+            />
+            {searching && <Loader2 className="absolute end-2 top-2 size-3 animate-spin text-muted-foreground" />}
+            {/* Results dropdown */}
+            {(searchResults?.length ?? 0) > 0 && (
+              <div className="absolute end-0 top-9 z-50 w-96 rounded-lg border border-border bg-card p-1.5 shadow-xl">
+                {(searchResults ?? []).map((h) => (
+                  <button
+                    key={h._id}
+                    onClick={() => {
+                      onOpenItem({
+                        _id: h._id,
+                        title: h.title,
+                        url: "",
+                        summary: "",
+                        publishedAt: h.publishedAt,
+                        thinkTankSlug: h.thinkTankSlug,
+                        topicFa: h.topicFa,
+                        hasArticle: h.where === "FULLTEXT",
+                      });
+                      setSearchQ("");
+                    }}
+                    className="block w-full rounded-md px-2 py-1.5 text-start transition-colors hover:bg-muted"
+                  >
+                    <p className="line-clamp-1 text-[11px] font-medium">{h.title}</p>
+                    <p className="line-clamp-2 text-[9px] leading-4 text-muted-foreground" dir="rtl">
+                      {h.snippet}
+                    </p>
+                    <p className="mt-0.5 flex items-center gap-1 text-[8px] text-muted-foreground/70">
+                      <span className="rounded-sm bg-muted px-1">{h.topicFa}</span>
+                      {h.thinkTankSlug}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <span className="hidden text-[9px] text-muted-foreground md:inline">{t("board.kbd.hint")}</span>
           {/* Resume chips */}
           {resumeFeed?.map((r) => (
@@ -554,6 +753,8 @@ export default function TopicBoard() {
               pinned={pinned.has(id)}
               focused={focusIdx === idx}
               viewMode={viewMode}
+              triageFilter={triageFilter}
+              sortMode={sortMode}
               onFocus={() => setFocusIdx(idx)}
               onPin={() => {
                 const next = new Set(pinned);

@@ -461,6 +461,239 @@ export const getTopicFeed = query({
   },
 });
 
+// ─── Board v3: triage states, priority sort, ticker, full-text search ───────
+// All deterministic reads over stored rows — no scoring at render beyond
+// simple arithmetic over stored evidence (rule 2).
+
+export interface BoardItemV3 extends BoardItem {
+  triage: "UNREAD" | "READING" | "READ"; // deterministic from readingStates
+  progress: number; // 0..1
+  priority: number; // deterministic 0..100
+}
+
+const TIER_BOOST: Record<string, number> = { S: 40, "A+": 32, A: 24, "B+": 16 };
+
+/** Feed with triage + deterministic priority (tier boost + recency decay). */
+export const getTopicFeedV3 = query({
+  args: {
+    topic: v.string(),
+    limit: v.optional(v.number()),
+    triage: v.optional(v.union(v.literal("UNREAD"), v.literal("READING"), v.literal("READ"))),
+    sort: v.optional(v.union(v.literal("recent"), v.literal("priority"))),
+  },
+  handler: async (ctx, { topic, limit, triage, sort }): Promise<BoardItemV3[]> => {
+    const take = (limit ?? 30) + 120; // overfetch so post-filter/sort still fills the page
+    const rows = await ctx.db
+      .query("publications")
+      .withIndex("by_topic", (q) => q.eq("topicFa", topic))
+      .order("desc")
+      .take(take);
+    const now = Date.now();
+    const out: BoardItemV3[] = [];
+    for (const pub of rows) {
+      const art = await ctx.db
+        .query("articleContent")
+        .withIndex("by_pub", (q) => q.eq("pubId", pub._id))
+        .unique();
+      const rs = await ctx.db
+        .query("readingStates")
+        .withIndex("by_pub", (q) => q.eq("pubId", pub._id))
+        .unique();
+      const tier =
+        (
+          await ctx.db
+            .query("thinkTanks")
+            .withIndex("by_slug", (q) => q.eq("slug", pub.thinkTankSlug))
+            .unique()
+        )?.tier ?? "B+";
+      const ageH = Math.max(0, (now - pub.publishedAt) / 3_600_000);
+      const recency = Math.max(0, 48 - ageH); // 48h linear decay
+      const priority = Math.min(100, (TIER_BOOST[tier] ?? 16) + recency);
+      const tri = rs?.triage ?? "UNREAD";
+      if (triage && tri !== triage) continue;
+      out.push({
+        _id: pub._id,
+        title: pub.title,
+        url: pub.url,
+        summary: pub.summary,
+        publishedAt: pub.publishedAt,
+        thinkTankSlug: pub.thinkTankSlug,
+        topicFa: pub.topicFa ?? topic,
+        hasArticle: art?.status === "READY",
+        triage: tri,
+        progress: rs?.progress ?? 0,
+        priority: Math.round(priority),
+      });
+      if (out.length >= (limit ?? 30)) break;
+    }
+    if ((sort ?? "recent") === "priority") {
+      out.sort((a, b) => b.priority - a.priority || b.publishedAt - a.publishedAt);
+    }
+    return out;
+  },
+});
+
+export interface TickerRow {
+  _id: string;
+  title: string;
+  topicFa: string;
+  thinkTankSlug: string;
+  publishedAt: number;
+}
+
+/** Live "just published" ticker: latest classified items across all topics. */
+export const getTicker = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }): Promise<TickerRow[]> => {
+    const rows = await ctx.db
+      .query("publications")
+      .withIndex("by_published")
+      .order("desc")
+      .take(limit ?? 14);
+    return rows.map((p) => ({
+      _id: p._id,
+      title: p.title,
+      topicFa: p.topicFa ?? "geopolitics",
+      thinkTankSlug: p.thinkTankSlug,
+      publishedAt: p.publishedAt,
+    }));
+  },
+});
+
+export interface SearchHit {
+  _id: string;
+  title: string;
+  topicFa: string;
+  thinkTankSlug: string;
+  publishedAt: number;
+  snippet: string; // matched fragment around the query term
+  where: "TITLE" | "SUMMARY" | "FULLTEXT";
+}
+
+/** Persian/English full-text search across title, summary and cached translations. */
+export const searchFullText = query({
+  args: { q: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, { q, limit }): Promise<SearchHit[]> => {
+    const needle = q.trim().toLowerCase();
+    if (needle.length < 3) return [];
+    const max = Math.min(limit ?? 12, 25);
+    const hits: SearchHit[] = [];
+    // 1) Title / summary scan (recent first)
+    const pubs = await ctx.db
+      .query("publications")
+      .withIndex("by_published")
+      .order("desc")
+      .take(1500);
+    for (const p of pubs) {
+      if (hits.length >= max) break;
+      const title = p.title.toLowerCase();
+      const summary = p.summary.toLowerCase();
+      if (title.includes(needle) || summary.includes(needle)) {
+        const hay = title.includes(needle) ? p.title : p.summary;
+        const idx = hay.toLowerCase().indexOf(needle);
+        const start = Math.max(0, idx - 40);
+        hits.push({
+          _id: p._id,
+          title: p.title,
+          topicFa: p.topicFa ?? "geopolitics",
+          thinkTankSlug: p.thinkTankSlug,
+          publishedAt: p.publishedAt,
+          snippet: (start > 0 ? "…" : "") + hay.slice(start, idx + needle.length + 60) + "…",
+          where: title.includes(needle) ? "TITLE" : "SUMMARY",
+        });
+      }
+    }
+    // 2) Cached Persian full-text scan (only if not already found)
+    if (hits.length < max) {
+      const found = new Set(hits.map((h) => h._id));
+      for (const p of pubs) {
+        if (hits.length >= max) break;
+        if (found.has(p._id)) continue;
+        const art = await ctx.db
+          .query("articleContent")
+          .withIndex("by_pub", (x) => x.eq("pubId", p._id))
+          .unique();
+        if (!art || art.status !== "READY") continue;
+        const idx = art.textFa.toLowerCase().indexOf(needle);
+        if (idx < 0) continue;
+        const start = Math.max(0, idx - 40);
+        hits.push({
+          _id: p._id,
+          title: p.title,
+          topicFa: p.topicFa ?? "geopolitics",
+          thinkTankSlug: p.thinkTankSlug,
+          publishedAt: p.publishedAt,
+          snippet: (start > 0 ? "…" : "") + art.textFa.slice(start, idx + needle.length + 60) + "…",
+          where: "FULLTEXT",
+        });
+      }
+    }
+    return hits;
+  },
+});
+
+export interface SimilarRow {
+  _id: string;
+  title: string;
+  thinkTankSlug: string;
+  publishedAt: number;
+  score: number; // 0..100 deterministic TF-IDF cosine over token sets
+}
+
+/** "More like this" — deterministic TF-IDF over title+summary tokens. */
+export const getSimilar = query({
+  args: { pubId: v.id("publications"), limit: v.optional(v.number()) },
+  handler: async (ctx, { pubId, limit }): Promise<SimilarRow[]> => {
+    const max = limit ?? 5;
+    const STOP = new Set([
+      "the", "of", "and", "to", "in", "for", "on", "a", "an", "is", "are", "with", "as", "by", "at", "from",
+      "and", "در", "به", "از", "که", "این", "با", "برای", "است", "های", "می",
+    ]);
+    const toks = (s: string): Map<string, number> => {
+      const m = new Map<string, number>();
+      for (const raw of s.toLowerCase().split(/[\s\p{P}]+/u)) {
+        if (raw.length < 3 || STOP.has(raw)) continue;
+        m.set(raw, (m.get(raw) ?? 0) + 1);
+      }
+      return m;
+    };
+    const self = await ctx.db.get(pubId);
+    if (!self) return [];
+    const selfToks = toks(`${self.title} ${self.summary}`);
+    if (selfToks.size === 0) return [];
+    // Candidate pool: same topic first, then recent.
+    const sameTopic = await ctx.db
+      .query("publications")
+      .withIndex("by_topic", (q) => q.eq("topicFa", self.topicFa ?? ""))
+      .order("desc")
+      .take(60);
+    const pool = sameTopic.some((p) => p._id === pubId)
+      ? sameTopic
+      : [...sameTopic, self];
+    const out: SimilarRow[] = [];
+    for (const p of pool) {
+      if (p._id === pubId) continue;
+      const t = toks(`${p.title} ${p.summary}`);
+      let dot = 0;
+      let na = 0;
+      let nb = 0;
+      for (const [k, va] of selfToks) na += va * va;
+      for (const [k, vb] of t) {
+        nb += vb * vb;
+        const va = selfToks.get(k);
+        if (va) dot += va * vb;
+      }
+      const denom = Math.sqrt(na) * Math.sqrt(nb);
+      if (denom <= 0) continue;
+      const score = Math.round((dot / denom) * 100);
+      if (score < 8) continue;
+      out.push({ _id: p._id, title: p.title, thinkTankSlug: p.thinkTankSlug, publishedAt: p.publishedAt, score });
+    }
+    out.sort((a, b) => b.score - a.score);
+    return out.slice(0, max);
+  },
+});
+
 /** Sidebar badge: how many new items per topic in the last N hours. */
 export const getTopicCounts = query({
   args: { hours: v.optional(v.number()) },

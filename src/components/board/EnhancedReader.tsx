@@ -9,6 +9,7 @@ import { useI18n } from "@/i18n/context";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
+  Download,
   Highlighter,
   Languages,
   Loader2,
@@ -17,6 +18,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { toFaDigits } from "@/components/graph/metrics";
 
 export interface ReaderTabData {
   titleFa: string;
@@ -125,7 +127,7 @@ export default function EnhancedReader({
   onToggleSplit: () => void;
   onAddToList: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [progress, setProgress] = useState(0);
   const [savedPct, setSavedPct] = useState<number | null>(null);
@@ -134,6 +136,11 @@ export default function EnhancedReader({
   const addHighlight = useMutation(api.reading.addHighlight);
   const [flash, setFlash] = useState<string | null>(null);
   const restoringRef = useRef(false);
+  // "More like this" — deterministic TF-IDF over stored publications.
+  const similar = useQuery(
+    api.articles.getSimilar,
+    tab.data ? { pubId: tab.pubId as never, limit: 4 } : "skip",
+  );
 
   // Restore resume point once content is present (only first paint).
   useEffect(() => {
@@ -185,6 +192,30 @@ export default function EnhancedReader({
     }
   };
 
+  // Export highlights + notes as a Markdown briefing document.
+  const exportAnnotations = () => {
+    const h = highlights ?? [];
+    if (h.length === 0) return;
+    const lines = [
+      `# ${tab.data?.titleFa ?? tab.title}`,
+      ``,
+      `${t("board.reader.provenance")} ${tab.data ? new URL(tab.data.url).hostname : ""}`,
+      ``,
+      ...h.flatMap((hl, i) => [
+        `## ${i + 1}. ${t("board.hl.title")}`,
+        `> ${hl.quote.replace(/\n/g, " ")}`,
+        hl.note ? `- ${t("board.hl.note")}: ${hl.note}` : "",
+        ``,
+      ]),
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `annotations-${tab.pubId.slice(-8)}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   const showSplit = tab.split && tab.data?.textEn;
 
   return (
@@ -226,9 +257,18 @@ export default function EnhancedReader({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {highlights && highlights.length > 0 && (
-            <span className="flex items-center gap-0.5 text-[9px] text-amber-600">
-              <Highlighter className="size-2.5" /> {highlights.length}
-            </span>
+            <>
+              <span className="flex items-center gap-0.5 text-[9px] text-amber-600">
+                <Highlighter className="size-2.5" /> {lang === "fa" ? toFaDigits(highlights.length) : highlights.length}
+              </span>
+              <button
+                onClick={exportAnnotations}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                title={t("board.exportMd")}
+              >
+                <Download className="size-3" /> {t("board.exportMd")}
+              </button>
+            </>
           )}
           <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label="close">
             <X className="size-3.5" />
@@ -266,6 +306,33 @@ export default function EnhancedReader({
                 {tab.data.textFa}
               </div>
               <HighlightCard id={tab.pubId} />
+              {/* More like this — deterministic TF-IDF over stored corpus */}
+              {similar && similar.length > 0 && (
+                <div className="mt-5 border-t border-border pt-4">
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    {t("board.similar")}
+                  </p>
+                  <div className="space-y-1.5">
+                    {similar.map((s) => (
+                      <a
+                        key={s._id}
+                        href={s._id}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          window.dispatchEvent(new CustomEvent("board:open-pub", { detail: s._id }));
+                        }}
+                        className="block rounded-md border border-border/60 px-2.5 py-1.5 transition-colors hover:bg-muted/60"
+                      >
+                        <p className="line-clamp-1 text-[11px] font-medium">{s.title}</p>
+                        <p className="mt-0.5 flex items-center gap-1.5 text-[9px] text-muted-foreground">
+                          <span>{s.thinkTankSlug}</span>
+                          <span className="rounded-sm bg-muted px-1 tabular-nums">{s.score}%</span>
+                        </p>
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
               <p className="mt-6 border-t border-border pt-3 text-[10px] leading-4 text-muted-foreground">
                 {t("board.reader.provenance")} {new URL(tab.data.url).hostname}
               </p>
