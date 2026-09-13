@@ -51,6 +51,8 @@ export interface EdgeMarker {
   latestTs: number;
   count14d: number;
   total: number;
+  /** Last-90d event series for §3.2 trajectory/volatility (optional). */
+  series?: Array<{ ts: number; type: string }>;
 }
 
 interface ActorGraphProps {
@@ -79,6 +81,15 @@ interface ActorGraphProps {
   /** Lasso selection mode (drag on empty canvas to select a group). */
   lassoEnabled?: boolean;
   onLassoSelect?: (slugs: Set<string>) => void;
+  /** §9.1 Ego-network mode: restrict to N hops around selectedSlug. */
+  egoDepth?: 0 | 1 | 2 | 3 | null;
+  /** Show «new in 7d» pulse badges (§9.1). */
+  highlightNew?: boolean;
+  /** §3.2 trajectory per relationId, from dynamicsFromMarkers. */
+  dynamics?: Record<
+    string,
+    import("./network").EdgeTrajectory
+  >;
 }
 
 const KIND_RADIUS: Record<string, number> = {

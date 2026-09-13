@@ -322,3 +322,22 @@ export function coverageHealth(
   }
   return Math.round((fresh.size / actors.length) * 100);
 }
+
+/**
+ * Client convenience: compute §3.2 trajectory/volatility for every edge that
+ * has a stored 90d event series (from getEventMarkers). Deterministic.
+ */
+export function dynamicsFromMarkers(
+  markers: Record<
+    string,
+    { latestTs: number; count14d: number; total: number; series?: Array<{ ts: number; type: string }> }
+  >,
+  now: number,
+): Record<string, EdgeTrajectory> {
+  const out: Record<string, EdgeTrajectory> = {};
+  for (const [id, m] of Object.entries(markers)) {
+    if (!m.series || m.series.length < 2) continue;
+    out[id] = edgeDynamics(m.series, now);
+  }
+  return out;
+}
