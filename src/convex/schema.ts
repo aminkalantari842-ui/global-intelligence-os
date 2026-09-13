@@ -571,6 +571,59 @@ const schema = defineSchema(
       timeSlice: v.optional(v.number()),
       createdAt: v.number(),
     }).index("by_user", ["userId"]),
+
+    // ─── Think-tank board: persisted column layout (order/pin/width) ──
+    boardLayouts: defineTable({
+      userId: v.string(), // shared workspace key
+      name: v.string(), // "default"
+      order: v.array(v.string()), // topic ids in display order
+      pinned: v.array(v.string()),
+      widths: v.any(), // JSON { [topicId]: widthPx }
+      viewMode: v.optional(
+        v.union(v.literal("comfortable"), v.literal("compact"), v.literal("list")),
+      ),
+      updatedAt: v.number(),
+    }).index("by_user", ["userId"]),
+
+    // ─── Reading progress & resume (per publication) ─────────────────
+    readingStates: defineTable({
+      pubId: v.id("publications"),
+      userId: v.string(),
+      progress: v.number(), // 0..1 scroll fraction
+      lastReadAt: v.number(),
+      triage: v.union(
+        v.literal("UNREAD"),
+        v.literal("READING"),
+        v.literal("READ"),
+      ),
+    })
+      .index("by_pub", ["pubId"])
+      .index("by_user_last", ["userId", "lastReadAt"]),
+
+    // ─── Reading lists / read-later queue ────────────────────────────
+    readingLists: defineTable({
+      userId: v.string(),
+      name: v.string(),
+      createdAt: v.number(),
+    }).index("by_user", ["userId"]),
+
+    readingListItems: defineTable({
+      listId: v.id("readingLists"),
+      pubId: v.id("publications"),
+      addedAt: v.number(),
+    }).index("by_list", ["listId"]),
+
+    // ─── Analyst highlights & private annotations on articles ────────
+    articleHighlights: defineTable({
+      pubId: v.id("publications"),
+      userId: v.string(),
+      quote: v.string(),
+      note: v.optional(v.string()),
+      lang: v.optional(v.union(v.literal("FA"), v.literal("EN"))),
+      createdAt: v.number(),
+    })
+      .index("by_pub", ["pubId"])
+      .index("by_user", ["userId"]),
   },
   {
     schemaValidation: false,

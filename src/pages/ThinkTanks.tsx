@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import TopicBoard from "@/components/board/TopicBoard";
+import { WorldStrip } from "@/components/board/BoardVisuals";
 import {
   ExternalLink,
   RefreshCw,
@@ -428,6 +429,11 @@ export default function ThinkTanks() {
           <TopicBoard />
         ) : (
         <>
+        {/* World coverage strip (list view) */}
+        <div className="mt-4">
+          <WorldStrip />
+        </div>
+
         {/* Stats strip */}
         {stats && (
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
