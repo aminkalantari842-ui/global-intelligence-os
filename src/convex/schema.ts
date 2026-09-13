@@ -545,6 +545,24 @@ const schema = defineSchema(
       ts: v.number(),
     }).index("by_target", ["targetType", "targetId"]),
 
+    // ─── Wargame Studio (SIMULATION runs with full provenance) ────────
+    // Every run stores its exact config (params = deterministic inputs),
+    // the transcript, and optional AI analysis (critique/brief, ASSESSMENT
+    // class, never merged into evidence). AI text never sets rungs.
+    wargames: defineTable({
+      title: v.string(),
+      aSlug: v.string(),
+      bSlug: v.string(),
+      mode: v.union(v.literal("PAIR"), v.literal("BLOC")),
+      config: v.string(), // JSON: full WargameConfig incl. seed + basis grade
+      transcript: v.string(), // JSON: rounds + final rungs (SIMULATION data)
+      outcome: v.string(),
+      basisGrade: v.string(),
+      aiAnalysis: v.optional(v.string()), // JSON: { critique, narrative, brief }
+      model: v.optional(v.string()),
+      ts: v.number(),
+    }).index("by_ts", ["ts"]),
+
     // ─── §9.2 Saved views (filters + time slice) ─────────────────────
     savedViews: defineTable({
       userId: v.string(),

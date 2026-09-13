@@ -3,7 +3,7 @@ import type { useQuery as useQueryType } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useI18n } from "@/i18n/context";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -22,6 +22,7 @@ import {
 } from "@/components/graph/metrics";
 import { dynamicsFromMarkers, computeCentrality, detectBlocks } from "@/components/graph/network";
 import MatrixView from "@/components/graph/MatrixView";
+import WargameStudio from "@/components/graph/WargameStudio";
 import {
   buildBranchTree,
   runWargame,
@@ -81,6 +82,7 @@ import {
   Search,
   Share2,
   Sparkles,
+  Swords,
   Trash2,
   X,
 } from "lucide-react";
@@ -267,10 +269,12 @@ function ScenarioPanel({
   relation,
   actorsBySlug,
   relations,
+  onOpenStudio,
 }: {
   relation: GraphRelation;
   actorsBySlug: Map<string, GraphActor>;
   relations: GraphRelation[];
+  onOpenStudio: (aSlug: string, bSlug: string) => void;
 }) {
   const { t, lang } = useI18n();
   const saveScenario = useMutation(api.graph.saveScenario);
@@ -339,6 +343,14 @@ function ScenarioPanel({
         </Button>
         <Button variant="outline" size="sm" className="h-7 px-2 text-[10px]" onClick={runCf}>
           {t("sim.counterfactual")}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 gap-1 border-dashed border-amber-600/60 px-2 text-[10px] text-amber-600 hover:bg-amber-500/10"
+          onClick={() => onOpenStudio(a.slug, b.slug)}
+        >
+          {t("wg.openStudio")}
         </Button>
         {sim?.kind === "WARGAME" && (
           <select
@@ -748,11 +760,13 @@ function EdgePanel({
   actorsBySlug,
   relations,
   onClose,
+  onOpenStudio,
 }: {
   relation: GraphRelation;
   actorsBySlug: Map<string, GraphActor>;
   relations: GraphRelation[];
   onClose: () => void;
+  onOpenStudio: (aSlug: string, bSlug: string) => void;
 }) {
   const { t } = useI18n();
   const events = useQuery(api.graph.getRelationEvents, {
@@ -813,7 +827,7 @@ function EdgePanel({
 
       <Separator className="my-4" />
 
-      <ScenarioPanel relation={relation} actorsBySlug={actorsBySlug} relations={relations} />
+      <ScenarioPanel relation={relation} actorsBySlug={actorsBySlug} relations={relations} onOpenStudio={onOpenStudio} />
 
       <Separator className="my-4" />
 
@@ -1240,6 +1254,14 @@ export default function Dashboard() {
   const [matrixOpen, setMatrixOpen] = useState(false);
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [viewsOpen, setViewsOpen] = useState(false);
+  const [wargameOpen, setWargameOpen] = useState(false);
+  const [studioPair, setStudioPair] = useState<{ a: string; b: string } | null>(null);
+
+  // §6.5: open the full Wargame Studio pre-paired on a given edge.
+  const openStudio = useCallback((aSlug: string, bSlug: string) => {
+    setStudioPair({ a: aSlug, b: bSlug });
+    setWargameOpen(true);
+  }, []);
   const [viewDraft, setViewDraft] = useState("");
   const saveView = useMutation(api.workspace.saveView);
   const deleteView = useMutation(api.workspace.deleteView);
@@ -1947,6 +1969,17 @@ ${edges}
               >
                 <Share2 className="size-4" />
               </Button>
+              {/* Wargame studio */}
+              <Button
+                variant={wargameOpen ? "default" : "outline"}
+                size="icon"
+                className="size-8"
+                onClick={() => setWargameOpen((v) => !v)}
+                aria-label={t("wg.title")}
+                title={t("wg.title")}
+              >
+                <Swords className="size-4" />
+              </Button>
               {/* §9.1 matrix view */}
               <Button
                 variant={matrixOpen ? "default" : "outline"}
@@ -2151,6 +2184,24 @@ ${edges}
                 dynamics={dynamicsMap}
               />
             )}
+            {/* Wargame studio overlay */}
+            {wargameOpen && graph && (
+              <WargameStudio
+                actors={graph.actors}
+                relations={graph.relations}
+                markers={markersMap}
+                actorsBySlug={actorsBySlug}
+                initialPair={
+                  selectedEdge
+                    ? { a: selectedEdge.sourceSlug, b: selectedEdge.targetSlug }
+                    : studioPair
+                      ? { a: studioPair.a, b: studioPair.b }
+                      : null
+                }
+                onClose={() => setWargameOpen(false)}
+              />
+            )}
+
             {/* §9.1 matrix view modal */}
             {matrixOpen && graph && (
               <div className="absolute inset-6 z-30 flex flex-col rounded-lg border border-border bg-background/95 p-4 shadow-2xl backdrop-blur">
@@ -2419,6 +2470,7 @@ ${edges}
               actorsBySlug={actorsBySlug}
               relations={graph?.relations ?? []}
               onClose={() => setSelectedEdge(null)}
+              onOpenStudio={openStudio}
             />
           ) : comparingTo && selectedActor ? (
             <ComparePanel

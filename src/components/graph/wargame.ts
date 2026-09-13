@@ -12,7 +12,7 @@ import type { GraphActor, GraphRelation } from "./types";
 // ─── Shared deterministic model ─────────────────────────────────────────────
 
 /** Hostile relation kinds drive escalation dynamics. */
-const HOSTILE = new Set([
+export const HOSTILE = new Set([
   "TENSION",
   "CONFLICT",
   "SANCTIONS",
@@ -383,3 +383,5 @@ export function parseSimulation(json: string): SimulationPayload | null {
     return null;
   }
 }
+
+export { HOSTILE as HOSTILE_KINDS };
