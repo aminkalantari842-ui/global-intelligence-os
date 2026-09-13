@@ -24,6 +24,18 @@ import {
 import { dynamicsFromMarkers, computeCentrality, detectBlocks } from "@/components/graph/network";
 import MatrixView from "@/components/graph/MatrixView";
 import {
+  buildBranchTree,
+  runWargame,
+  runCounterfactual,
+  serializeSimulation,
+  parseSimulation,
+  dispositionOf,
+  type SimulationPayload,
+  type BranchTree,
+  type WargameResult,
+  type CounterfactualResult,
+} from "@/components/graph/wargame";
+import {
   LADDER_RUNGS,
   MAX_RUNG,
   currentRung,
@@ -242,6 +254,259 @@ function EventSourceRow({
             : "Report"}
       </span>
     </a>
+  );
+}
+
+/**
+ * §6.5 Scenario & wargaming panel — deterministic branch trees, multi-round
+ * wargames, and counterfactual edge removal. EVERY output carries the
+ * SIMULATION badge; nothing here writes to relationships or evidence
+ * (rule: simulations are stored as scenarios, never merged with observed data).
+ */
+function ScenarioPanel({
+  relation,
+  actorsBySlug,
+  relations,
+}: {
+  relation: GraphRelation;
+  actorsBySlug: Map<string, GraphActor>;
+  relations: GraphRelation[];
+}) {
+  const { t, lang } = useI18n();
+  const saveScenario = useMutation(api.graph.saveScenario);
+  const deleteScenario = useMutation(api.graph.deleteScenario);
+  const savedScenarios = useQuery(api.graph.listScenarios, { limit: 12 });
+  const [sim, setSim] = useState<SimulationPayload | null>(null);
+  const [rounds, setRounds] = useState(6);
+
+  const a = actorsBySlug.get(relation.sourceSlug);
+  const b = actorsBySlug.get(relation.targetSlug);
+  if (!a || !b) return null;
+
+  const runTree = () => setSim(buildBranchTree(relation));
+  const runGame = () => {
+    const g = runWargame(a, b, relations, rounds);
+    setSim(g);
+  };
+  const runCf = () => setSim(runCounterfactual(relation, [...actorsBySlug.values()], relations));
+
+  const persist = () => {
+    if (!sim) return;
+    const title =
+      sim.kind === "BRANCH_TREE"
+        ? `${t("sim.tree")}: ${a.name} ↔ ${b.name}`
+        : sim.kind === "WARGAME"
+          ? `${t("sim.wargame")}: ${a.name} ↔ ${b.name} (×${fmtNum(sim.rounds.length, lang)})`
+          : `${t("sim.counterfactual")}: ${a.name} ↔ ${b.name}`;
+    void saveScenario({
+      title,
+      relationId: relation._id as Id<"relationships">,
+      subjectSlugs: [a.slug, b.slug],
+      kind: sim.kind,
+      ...(sim.kind === "WARGAME" ? { rounds: sim.rounds.length } : {}),
+      payload: serializeSimulation(sim),
+    });
+  };
+
+  const OUTCOME_KEY: Record<string, string> = {
+    STALEMATE: "sim.out.stalemate",
+    A_DOMINANT: "sim.out.a",
+    B_DOMINANT: "sim.out.b",
+    MUTUAL_ESCALATION: "sim.out.esc",
+    MUTUAL_DEFUSE: "sim.out.def",
+  };
+
+  const RUNG_COLOR = (r: number) =>
+    r >= 6 ? "bg-red-600" : r >= 4 ? "bg-amber-600" : r >= 2 ? "bg-sky-600" : "bg-emerald-600";
+
+  return (
+    <div className="px-4 pt-3">
+      <div className="flex items-center justify-between">
+        <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+          {t("sim.title")}
+        </p>
+        <span className="rounded border border-dashed border-amber-600/60 bg-amber-500/10 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-widest text-amber-600">
+          {t("sim.badge")}
+        </span>
+      </div>
+
+      <div className="mt-1.5 flex flex-wrap gap-1">
+        <Button variant="outline" size="sm" className="h-7 px-2 text-[10px]" onClick={runTree}>
+          {t("sim.tree")}
+        </Button>
+        <Button variant="outline" size="sm" className="h-7 px-2 text-[10px]" onClick={runGame}>
+          {t("sim.wargame")}
+        </Button>
+        <Button variant="outline" size="sm" className="h-7 px-2 text-[10px]" onClick={runCf}>
+          {t("sim.counterfactual")}
+        </Button>
+        {sim?.kind === "WARGAME" && (
+          <select
+            value={rounds}
+            onChange={(e) => setRounds(Number(e.target.value))}
+            className="h-7 rounded-md border border-border bg-card px-1 text-[10px] outline-none"
+            aria-label={t("sim.rounds")}
+          >
+            {[4, 6, 8, 10].map((n) => (
+              <option key={n} value={n}>
+                ×{fmtNum(n, lang)}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {sim && (
+        <div className="mt-2 rounded-md border border-amber-600/40 bg-amber-500/5 p-2">
+          {/* Branch tree */}
+          {sim.kind === "BRANCH_TREE" && (
+            <div>
+              <p className="text-[10px] font-semibold">
+                {t("sim.tree")} · {t("ladder.rung")} {fmtNum(sim.startRungs[0], lang)}
+              </p>
+              <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+                {sim.nodes.filter((n) => n.depth === 1).map((n1, i) => (
+                  <div key={n1.id} className="rounded border border-border/60 p-1.5">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[9px] font-medium">{t(n1.labelKey)}</span>
+                      <span className="text-[9px] tabular-nums text-muted-foreground">
+                        {fmtNum(Math.round(n1.probabilityBp / 100), lang)}%
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1">
+                      <span className={`size-2 rounded-full ${RUNG_COLOR(n1.rungs[0])}`} />
+                      <span className="text-[9px] tabular-nums">{fmtNum(n1.rungs[0], lang)}</span>
+                      <span className="text-[8px] text-muted-foreground">·</span>
+                      <span className={`size-2 rounded-full ${RUNG_COLOR(n1.rungs[1])}`} />
+                      <span className="text-[9px] tabular-nums">{fmtNum(n1.rungs[1], lang)}</span>
+                    </div>
+                    <div className="mt-1 space-y-0.5 border-t border-border/50 pt-1">
+                      {sim.nodes.filter((n2) => n2.parent === n1.id).map((n2) => (
+                        <div key={n2.id} className="flex items-center justify-between gap-1">
+                          <span className="truncate text-[8px] text-muted-foreground">{t(n2.labelKey)}</span>
+                          <span className="shrink-0 text-[8px] tabular-nums text-muted-foreground">
+                            {fmtNum(Math.round(n2.probabilityBp / 1000), lang)}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    {i === 0 && (
+                      <p className="mt-1 text-[7.5px] leading-2.5 text-muted-foreground">
+                        {t("sim.bpNote")}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Wargame rounds */}
+          {sim.kind === "WARGAME" && (
+            <div>
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-semibold">
+                  {t("sim.wargame")} · {t("sim.pressure")} {fmtNum(Math.round(sim.pressureBp / 100), lang)}%
+                </p>
+                <span className="rounded bg-foreground px-1.5 py-0.5 text-[9px] font-bold text-background">
+                  {t(OUTCOME_KEY[sim.outcome])}
+                </span>
+              </div>
+              <p className="mt-0.5 text-[9px] text-muted-foreground">
+                {a.name}: {t(`sim.disp.${dispositionOf(a.slug, relations)}`)} · {b.name}:{" "}
+                {t(`sim.disp.${dispositionOf(b.slug, relations)}`)}
+              </p>
+              <div className="mt-1.5 flex items-end gap-1" role="img">
+                {sim.rounds.map((r) => (
+                  <div key={r.round} className="flex min-w-0 flex-1 flex-col items-center gap-0.5">
+                    <div className="flex w-full items-end justify-center gap-0.5" style={{ height: 34 }}>
+                      <div
+                        className={`w-2 rounded-t-sm ${RUNG_COLOR(r.aRung)}`}
+                        style={{ height: 4 + r.aRung * 4 }}
+                        title={`${a.name}: ${r.aRung}`}
+                      />
+                      <div
+                        className={`w-2 rounded-t-sm ${RUNG_COLOR(r.bRung)}`}
+                        style={{ height: 4 + r.bRung * 4 }}
+                        title={`${b.name}: ${r.bRung}`}
+                      />
+                    </div>
+                    <span className="text-[8px] tabular-nums text-muted-foreground">
+                      {lang === "fa" ? toFaDigits(r.round) : r.round}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Counterfactual paths */}
+          {sim.kind === "COUNTERFACTUAL" && (
+            <div>
+              <p className="text-[10px] font-semibold">
+                {t("sim.counterfactual")} ·{" "}
+                {sim.lostConnectivity ? (
+                  <span className="text-red-600">{t("sim.noPath")}</span>
+                ) : (
+                  t("sim.altPaths")
+                )}
+              </p>
+              <ul className="mt-1 space-y-1">
+                {sim.alternatePaths.map((p, i) => (
+                  <li key={i} className="rounded border border-border/60 px-2 py-1">
+                    <p className="truncate text-[10px]" dir="ltr">
+                      {p.path.map((s) => actorsBySlug.get(s)?.name ?? s).join(" → ")}
+                    </p>
+                    <p className="text-[9px] tabular-nums text-muted-foreground">
+                      {t("sim.strength")}: {fmtNum(Math.round(p.strength * 100), lang)}%
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="mt-2 flex items-center justify-between border-t border-amber-600/30 pt-1.5">
+            <p className="text-[8.5px] leading-3 text-muted-foreground">{t("sim.disclaimer")}</p>
+            <Button variant="outline" size="sm" className="h-6 shrink-0 px-2 text-[9px]" onClick={persist}>
+              {t("sim.save")}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Saved simulations */}
+      {(savedScenarios?.filter((s) => s.relationId === relation._id).length ?? 0) > 0 && (
+        <div className="mt-1.5 space-y-0.5">
+          {savedScenarios
+            ?.filter((s) => s.relationId === relation._id)
+            .map((s) => (
+              <div key={s._id} className="flex items-center gap-1.5 rounded-md border border-border/50 px-2 py-1">
+                <span className="shrink-0 rounded border border-dashed border-amber-600/60 px-1 text-[7.5px] font-bold uppercase text-amber-600">
+                  SIM
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[10px]">{s.title}</span>
+                <button
+                  className="shrink-0 text-[9px] text-muted-foreground hover:text-foreground"
+                  onClick={() => {
+                    const parsed = parseSimulation(s.payload);
+                    if (parsed) setSim(parsed);
+                  }}
+                >
+                  {t("sim.load")}
+                </button>
+                <button
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                  onClick={() => void deleteScenario({ id: s._id })}
+                  aria-label={t("btn.delete")}
+                >
+                  <Trash2 className="size-3" />
+                </button>
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -481,10 +746,12 @@ function EscalationPanel({
 function EdgePanel({
   relation,
   actorsBySlug,
+  relations,
   onClose,
 }: {
   relation: GraphRelation;
   actorsBySlug: Map<string, GraphActor>;
+  relations: GraphRelation[];
   onClose: () => void;
 }) {
   const { t } = useI18n();
@@ -543,6 +810,10 @@ function EdgePanel({
           <p className="mt-0.5 font-medium">{fmtDate(relation.since)}</p>
         </div>
       </div>
+
+      <Separator className="my-4" />
+
+      <ScenarioPanel relation={relation} actorsBySlug={actorsBySlug} relations={relations} />
 
       <Separator className="my-4" />
 
@@ -2151,6 +2422,7 @@ ${edges}
             <EdgePanel
               relation={selectedEdge}
               actorsBySlug={actorsBySlug}
+              relations={graph?.relations ?? []}
               onClose={() => setSelectedEdge(null)}
             />
           ) : comparingTo && selectedActor ? (

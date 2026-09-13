@@ -41,6 +41,56 @@ export const deleteTripwire = mutation({
   },
 });
 
+// ─── §6.5 Scenarios (SIMULATION outputs — never merged into evidence) ───────
+
+export const listScenarios = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    return await ctx.db
+      .query("scenarios")
+      .withIndex("by_ts")
+      .order("desc")
+      .take(Math.min(limit ?? 20, 50));
+  },
+});
+
+export const saveScenario = mutation({
+  args: {
+    title: v.string(),
+    relationId: v.optional(v.id("relationships")),
+    subjectSlugs: v.array(v.string()),
+    kind: v.union(
+      v.literal("BRANCH_TREE"),
+      v.literal("WARGAME"),
+      v.literal("COUNTERFACTUAL"),
+    ),
+    rounds: v.optional(v.number()),
+    payload: v.string(),
+  },
+  handler: async (ctx, { title, relationId, subjectSlugs, kind, rounds, payload }) => {
+    const userId = await getAuthUserId(ctx);
+    return await ctx.db.insert("scenarios", {
+      title: title.trim().slice(0, 140),
+      ...(relationId ? { relationId } : {}),
+      subjectSlugs: subjectSlugs.slice(0, 8),
+      kind,
+      ...(rounds !== undefined ? { rounds } : {}),
+      payload: payload.slice(0, 60_000),
+      createdBy: userId ?? undefined,
+      ts: Date.now(),
+    });
+  },
+});
+
+export const deleteScenario = mutation({
+  args: { id: v.id("scenarios") },
+  handler: async (ctx, { id }) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("NOT_AUTHENTICATED");
+    await ctx.db.delete(id);
+  },
+});
+
 // ─── Canonical content queries ─────────────────────────────────────────────
 // Every query here is deterministic and read-only. Confidence and weight are
 // computed at ingestion time by the scoring model — never at render time by

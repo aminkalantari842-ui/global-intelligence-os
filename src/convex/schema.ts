@@ -508,6 +508,27 @@ const schema = defineSchema(
       ts: v.number(),
     }).index("by_actor", ["actorSlug"]),
 
+    // ─── §6.5 Scenario trees & wargaming (SIMULATION outputs) ────────
+    // Every row is a labeled simulation derived from the stored graph state
+    // at run time. Branch probabilities are deterministic model outputs over
+    // stored weights; simulations NEVER merge into observed data (rule: all
+    // outputs carry owner "SIMULATION" and evidenceIds of their anchors).
+    scenarios: defineTable({
+      title: v.string(),
+      relationId: v.optional(v.id("relationships")),
+      subjectSlugs: v.array(v.string()),
+      kind: v.union(
+        v.literal("BRANCH_TREE"),
+        v.literal("WARGAME"),
+        v.literal("COUNTERFACTUAL"),
+      ),
+      rounds: v.optional(v.number()),
+      payload: v.string(), // JSON: branches/steps with rungs, probabilities, paths
+      anchoredEvidence: v.optional(v.array(v.id("relationEvents"))),
+      createdBy: v.optional(v.id("users")),
+      ts: v.number(),
+    }).index("by_ts", ["ts"]),
+
     // ─── §7.3 Assessments / predictions with calibration ─────────────
     assessments: defineTable({
       subject: v.string(),
