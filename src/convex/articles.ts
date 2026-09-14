@@ -725,3 +725,13 @@ export const getTopicCounts = query({
     return counts;
   },
 });
+
+/** C5 key-claim highlights: the cached deterministic top sentences. */
+export const getPubClaims = query({
+  args: { pubId: v.id("publications") },
+  handler: async (ctx, { pubId }) => {
+    const pub = await ctx.db.get(pubId);
+    if (!pub) return null;
+    return { keyClaims: pub.keyClaims ?? [], autoTags: pub.autoTags ?? [] };
+  },
+});
