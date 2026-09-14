@@ -595,18 +595,35 @@ export default function TopicBoard() {
   }, [visibleIds, focusIdx, focusItems]);
 
   // ── Reader tabs (open + extraction pipeline) ──
-  const onOpenItem = (item: BoardItem, _topic?: string) => {
-    const key = item._id;
-    setActiveKey(key);
-    setTabs((prev) => {
-      if (prev.some((tb) => tb.key === key)) return prev;
-      const tab: EnhancedReaderTab = { key, pubId: item._id, title: item.title, loading: true };
-      void openArticle({ pubId: item._id as never })
+  const reextract = useAction(api.articles.reextractArticle);
+
+  /** Shared loader: openArticle (cache-aware ladder) or forced re-extraction. */
+  const loadPub = useCallback(
+    (pubId: string, key: string, fallbackTitle: string, opts?: { force?: boolean }) => {
+      const run = opts?.force
+        ? reextract({ pubId: pubId as never })
+        : openArticle({ pubId: pubId as never });
+      void run
         .then((data) => {
           setTabs((cur) =>
             cur.map((tb) =>
               tb.key === key
-                ? { ...tb, loading: false, data: data ? { ...data, textEn: undefined } : undefined }
+                ? {
+                    ...tb,
+                    loading: false,
+                    error: undefined,
+                    title: data?.titleFa || fallbackTitle,
+                    // textEn passes through so the EN/FA split pane works.
+                    data: data
+                      ? {
+                          titleFa: data.titleFa,
+                          textFa: data.textFa,
+                          textEn: data.textEn ?? undefined,
+                          status: data.status,
+                          url: data.url,
+                        }
+                      : undefined,
+                  }
                 : tb,
             ),
           );
@@ -625,6 +642,18 @@ export default function TopicBoard() {
             ),
           );
         });
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [openArticle, reextract],
+  );
+
+  const onOpenItem = (item: BoardItem, _topic?: string) => {
+    const key = item._id;
+    setActiveKey(key);
+    setTabs((prev) => {
+      if (prev.some((tb) => tb.key === key)) return prev;
+      const tab: EnhancedReaderTab = { key, pubId: item._id, title: item.title, loading: true };
+      loadPub(item._id, key, item.title);
       return [...prev.slice(-5), tab];
     });
   };
@@ -677,24 +706,7 @@ export default function TopicBoard() {
       setTabs((prev) => {
         if (prev.some((tb) => tb.key === key)) return prev;
         const tab: EnhancedReaderTab = { key, pubId, title: "…", loading: true };
-        void openArticle({ pubId: pubId as never })
-          .then((data) => {
-            setTabs((cur) =>
-              cur.map((tb) =>
-                tb.key === key
-                  ? {
-                      ...tb,
-                      loading: false,
-                      title: data ? data.titleFa : tb.title,
-                      data: data ? { ...data, textEn: undefined } : undefined,
-                    }
-                  : tb,
-              ),
-            );
-          })
-          .catch(() =>
-            setTabs((cur) => cur.map((tb) => (tb.key === key ? { ...tb, loading: false, error: t("board.readerError") } : tb))),
-          );
+        loadPub(pubId, key, "…");
         return [...prev.slice(-5), tab];
       });
     };
@@ -702,6 +714,28 @@ export default function TopicBoard() {
     return () => window.removeEventListener("board:open-pub", onOpenPub);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openArticle]);
+
+  // Re-extract from source (reader "failed?" banner): force the full ladder.
+  useEffect(() => {
+    const onReextract = (e: Event) => {
+      const pubId = (e as CustomEvent<string>).detail;
+      if (!pubId) return;
+      const key = pubId;
+      setActiveKey(key);
+      setTabs((prev) => {
+        const existing = prev.find((tb) => tb.key === key);
+        if (existing) {
+          loadPub(pubId, key, existing.title, { force: true });
+          return prev.map((tb) => (tb.key === key ? { ...tb, loading: true, error: undefined } : tb));
+        }
+        const tab: EnhancedReaderTab = { key, pubId, title: "…", loading: true };
+        loadPub(pubId, key, "…", { force: true });
+        return [...prev.slice(-5), tab];
+      });
+    };
+    window.addEventListener("board:reextract", onReextract);
+    return () => window.removeEventListener("board:reextract", onReextract);
+  }, [loadPub]);
 
   useEffect(() => {
     void lang;

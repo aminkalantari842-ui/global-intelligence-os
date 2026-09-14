@@ -8,12 +8,15 @@ import { api } from "@/convex/_generated/api";
 import { useI18n } from "@/i18n/context";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   Check,
   Download,
+  ExternalLink,
   Highlighter,
   Languages,
   Loader2,
   MessageSquarePlus,
+  RefreshCw,
   StickyNote,
   Trash2,
   X,
@@ -301,6 +304,24 @@ export default function EnhancedReader({
       {/* C5 pre-marked key claims (deterministic scoring) */}
       <KeyClaims pubId={tab.pubId} />
 
+      {/* Extraction-failure banner: the cached text is only the RSS summary stub.
+          Offers a one-click forced re-extract from the original source. */}
+      {tab.data && !tab.loading && tab.data.status !== "READY" && (
+        <div className="flex shrink-0 items-start gap-2 border-b border-amber-500/40 bg-amber-500/10 px-4 py-2">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-500" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-medium text-amber-600">{t("board.reader.extractFailed")}</p>
+            <p className="mt-0.5 text-[10px] leading-4 text-muted-foreground">{t("board.reader.extractHint")}</p>
+          </div>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent("board:reextract", { detail: tab.pubId }))}
+            className="flex shrink-0 items-center gap-1 rounded-md border border-amber-500/50 bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-700 transition-colors hover:bg-amber-500/20"
+          >
+            <RefreshCw className="size-3" /> {t("board.reader.reextract")}
+          </button>
+        </div>
+      )}
+
       {/* D-layer per-article AI analysis + K-layer provenance */}
       {tab.data && !tab.loading && <AiPanel pubId={tab.pubId} />}
 
@@ -339,6 +360,14 @@ export default function EnhancedReader({
           {tab.data && (
             <article className="mx-auto max-w-2xl">
               <h1 className="text-lg font-bold leading-8">{tab.data.titleFa}</h1>
+              {/* Provenance line: which domain this text was extracted from. */}
+              <p className="mt-1.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                <ExternalLink className="size-3" />
+                {t("board.reader.provenance")} {new URL(tab.data.url).hostname}
+              </p>
+              {tab.data.status !== "READY" && (
+                <p className="mt-1 text-[10px] text-amber-600">{t("board.reader.extractShort")}</p>
+              )}
               <div className="mt-4 whitespace-pre-wrap text-[13px] leading-7 text-foreground/90 selection:bg-amber-300/30">
                 {tab.data.textFa}
               </div>

@@ -32,6 +32,7 @@ interface ArticleRow {
 interface ReaderRow {
   titleFa: string;
   textFa: string;
+  textEn?: string; // extracted original text (EN/FA split pane)
   status: string;
   url: string;
 }
@@ -142,22 +143,83 @@ export function classifyTopicFa(title: string, summary: string): string {
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 
-/** Reader-mode extraction via r.jina.ai — clean text, bypasses bot walls. */
-async function extractArticleText(url: string): Promise<string> {
-  const readerUrl = `https://r.jina.ai/${url}`;
-  const res = await fetch(readerUrl, {
-    headers: { "User-Agent": UA, Accept: "text/plain" },
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) throw new Error(`extract ${res.status}`);
-  const text = await res.text();
-  // Trim navigation boilerplate markers the reader adds; keep the substance.
+/**
+ * Reader-mode extraction ladder. r.jina.ai is tried twice (it rate-limits
+ * bursts without a key); if it still refuses, we fetch the raw HTML and
+ * strip tags locally — enough for sites that serve plain articles.
+ */
+function cleanReaderText(text: string): string {
   return text
     .replace(/\(http[s]?:\/\/[^)]+\)/g, "")
     .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
     .replace(/#{1,4}\s/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+async function extractViaJina(url: string, timeoutMs: number): Promise<string> {
+  const res = await fetch(`https://r.jina.ai/${url}`, {
+    headers: { "User-Agent": UA, Accept: "text/plain" },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!res.ok) throw new Error(`jina ${res.status}`);
+  const text = cleanReaderText(await res.text());
+  if (text.length < 200) throw new Error("jina too short");
+  return text;
+}
+
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|h[1-6]|blockquote|tr)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n\s*\n\s*\n+/g, "\n\n")
+    .trim();
+}
+
+async function extractDirect(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent": UA,
+      Accept: "text/html,application/xhtml+xml",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+    signal: AbortSignal.timeout(20_000),
+    redirect: "follow",
+  });
+  if (!res.ok) throw new Error(`direct ${res.status}`);
+  const text = htmlToText(await res.text());
+  if (text.length < 200) throw new Error("direct too short");
+  return text;
+}
+
+/** Try the ladder in order; throw only when every rung fails. */
+async function extractArticleText(url: string): Promise<string> {
+  const attempts: Array<() => Promise<string>> = [
+    () => extractViaJina(url, 30_000),
+    () => extractViaJina(url, 45_000),
+    () => extractDirect(url),
+  ];
+  const errors: string[] = [];
+  for (const rung of attempts) {
+    try {
+      const text = await rung();
+      if (text.length >= 200) return text;
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message.slice(0, 80) : "failed");
+    }
+  }
+  throw new Error(`all extractors failed: ${errors.join(" | ")}`);
 }
 
 // ─── Translation (chunked, full article) ────────────────────────────────────
@@ -236,27 +298,35 @@ interface RunnerCtx {
 async function ensureArticleHelper(
   ctx: RunnerCtx,
   pubId: any,
+  opts?: { force?: boolean },
 ): Promise<{ ok: boolean; reason?: string }> {
   const existing = (await ctx.runQuery(internal.articles.fetchArticle, { pubId })) as
-    | { status: string; textFa: string }
+    | { status: string; textFa: string; chars: number }
     | null;
-  if (existing?.status === "READY" && existing.textFa.length > 0) {
+  if (
+    !opts?.force &&
+    existing?.status === "READY" &&
+    existing.textFa.length > 0 &&
+    existing.chars >= 200
+  ) {
     return { ok: true, reason: "cached" };
   }
-
   const pub = (await ctx.runQuery(internal.articles.fetchPub, { pubId })) as
     | { url: string; title: string; summary: string }
     | null;
   if (!pub) return { ok: false, reason: "not_found" };
 
-  // 1) Extract source text (fall back to RSS summary on hard failure).
+  // 1) Extract source text. Never silently downgrade: on hard failure of the
+  //    full ladder we keep the old GOOD row (if any) and report FAILED without
+  //    overwriting; only a row that never had full text gets the summary stub.
   let textEn = "";
   let failed = false;
   try {
     textEn = await extractArticleText(pub.url);
-    if (textEn.length < 200) throw new Error("too short");
   } catch {
     failed = true;
+    const hadGoodText = !!existing && existing.status === "READY" && existing.chars >= 200;
+    if (hadGoodText) return { ok: false, reason: "kept_cached" };
     textEn = pub.summary ?? "";
   }
   if (!textEn.trim()) return { ok: false, reason: "empty" };
@@ -283,6 +353,46 @@ async function ensureArticleHelper(
   });
   return { ok: true, reason: failed ? "summary_fallback" : "extracted" };
 }
+
+/**
+ * Reader entry point with retry semantics: re-run the extraction ladder when
+ * the cached row is missing/stub/FAILED, or when the analyst forces it
+ * ("re-extract from source" button). Overwrite is allowed for the stub case.
+ */
+export const openArticle = action({
+  args: { pubId: v.id("publications"), force: v.optional(v.boolean()) },
+  handler: async (ctx, { pubId, force }): Promise<ReaderRow | null> => {
+    const res = await ensureArticleHelper(ctx as unknown as RunnerCtx, pubId, {
+      force: force === true,
+    });
+    if (res.reason === "kept_cached") {
+      // Previous good translation still intact; surface it with its original status.
+      const row = (await ctx.runQuery(internal.articles.fetchArticle, { pubId })) as
+        | { titleFa: string; textFa: string; textEn: string; status: string; url: string }
+        | null;
+      return row;
+    }
+    const row = (await ctx.runQuery(internal.articles.fetchArticle, { pubId })) as
+      | { titleFa: string; textFa: string; textEn: string; status: string; url: string }
+      | null;
+    return row;
+  },
+});
+
+/**
+ * One-click re-extraction from the original source. Bypasses the cache,
+ * re-runs the full ladder, retranslates, and restores status to READY.
+ */
+export const reextractArticle = action({
+  args: { pubId: v.id("publications") },
+  handler: async (ctx, { pubId }): Promise<ReaderRow | null> => {
+    const row = await ensureArticleHelper(ctx as unknown as RunnerCtx, pubId, { force: true });
+    if (row.reason === "kept_cached") {
+      return (await ctx.runQuery(internal.articles.fetchArticle, { pubId })) as ReaderRow | null;
+    }
+    return (await ctx.runQuery(internal.articles.fetchArticle, { pubId })) as ReaderRow | null;
+  },
+});
 
 export const fetchPub = internalQuery({
   args: { pubId: v.id("publications") },
@@ -396,21 +506,6 @@ export const listRecent = internalQuery({
       .withIndex("by_published")
       .order("desc")
       .take(60);
-  },
-});
-
-/**
- * Reader entry point: ensures the full Persian article exists (extract →
- * translate → cache) and returns it. Cached rows return instantly.
- */
-export const openArticle = action({
-  args: { pubId: v.id("publications") },
-  handler: async (ctx, { pubId }): Promise<ReaderRow | null> => {
-    await ensureArticleHelper(ctx as unknown as RunnerCtx, pubId);
-    const row = (await ctx.runQuery(internal.articles.fetchArticle, { pubId })) as
-      | { titleFa: string; textFa: string; status: string; url: string }
-      | null;
-    return row;
   },
 });
 
