@@ -1,6 +1,17 @@
 import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { SEED_ACTORS, SEED_RELATIONSHIPS } from "./data/seed";
+import {
+  ME2026_NEW_ACTORS,
+  ME2026_EXISTING_ENRICHMENTS,
+  ME2026_SLUG,
+} from "./data/me2026Actors";
+import { ME2026_BLOCK_EDGES, ME2026_FLASH_EDGES, ME2026_MATRIX } from "./data/me2026Rels";import { T26, buildDecisionCycle,
+  buildDescription,
+  buildMonitoring,
+  type Me2026Edge,
+} from "./data/me2026Types";
+import { latestSourceTs, resolveSources } from "./data/me2026Sources";
 
 // Single shared analyst workspace (auth removed): watchlists, notes, saved
 // views and scenarios are global — one shared intelligence desk.
@@ -473,12 +484,239 @@ export const getRelationEvents = query({
 
 export const getSnapshotTrend = query({
   args: { slug: v.string(), limit: v.optional(v.number()) },
-  handler: async (ctx, { slug, limit }) => {
+  handler: async (ctx, { slug, limit }) =>  {
     const rows = await ctx.db
       .query("actorSnapshots")
       .withIndex("by_slug_ts", (q) => q.eq("slug", slug))
       .collect();
     rows.sort((a, b) => a.ts - b.ts);
     return rows.slice(-(limit ?? 30));
+  },
+});
+
+// ─── ME2026 strategic mapping ingest (2026-09-13 dataset) ───────────────────
+// Idempotent, evidence-anchored expansion of the canonical graph:
+//   1. ingestMe2026Actors — inserts 57 new actors with full 16-dimension
+//      profiles and merges FA aliases + decisionCycle + monitoring into the
+//      13 already-seeded actors (never overwrites name/kind/description).
+//   2. ingestMe2026Rels — batched upsert of ~150 edges from the relationship
+//      matrix, strategic blocks and flashpoints; every edge carries at least
+//      one relationEvent citing S01–S35 (single citation → REPORTED_CLAIM;
+//      ≥2 → OBSERVED_FACT, which is the deterministic rule in me2026Sources).
+// Both are guarded by appSettings keys, so re-running is a no-op and the
+// existing seed data is never duplicated.
+
+const ME_ACTORS_KEY = "me2026.actorsDone";
+const ME_RELS_KEY = "me2026.relsDone";
+const ME_CHUNK = 14; // edges per transaction batch (each edge = 1 event write)
+
+async function setDone(ctx: any, key: string, detail: string) {
+  const existing = await ctx.db
+    .query("appSettings")
+    .withIndex("by_key", (q: any) => q.eq("key", key))
+    .first();
+  if (existing) return;
+  await ctx.db.insert("appSettings", { key, value: detail, ts: dbNow() });
+}
+
+export const ingestMe2026Actors = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = dbNow();
+    let added = 0;
+    let enriched = 0;
+
+    // 1) New actors — insert with full profile.
+    for (const p of ME2026_NEW_ACTORS) {
+      const dup = await ctx.db
+        .query("actors")
+        .withIndex("by_slug", (q) => q.eq("slug", p.slug))
+        .first();
+      if (dup) continue;
+      const firstSeen = T26("2026-09-13");
+      await ctx.db.insert("actors", {
+        slug: p.slug,
+        name: p.nameEn,
+        aliases: [p.nameFa, p.nameEn, p.id],
+        kind: p.kind,
+        country: p.country,
+        region: p.region,
+        tier: p.tier,
+        description: buildDescription(p.dims),
+        sourceCount: p.src.length * 6,
+        status: p.tier === 1 ? ("ACTIVE" as const) : ("MONITORED" as const),
+        firstSeen,
+        lastSeen: latestSourceTs(p.src),
+        mode: "ACTIVE" as const,
+        modeSince: now,
+        decisionCycle: buildDecisionCycle(p.dims),
+        monitoring: buildMonitoring(p.dims, p.src),
+      });
+      await ctx.db.insert("changeLog", {
+        kind: "ACTOR_ADDED",
+        slug: p.slug,
+        detail: `ME2026 mapping: ${p.nameFa} (${p.id}) added with 16-dimension profile`,
+        ts: now,
+      });
+      added += 1;
+    }
+
+    // 2) Existing actors — merge aliases + decision-cycle/monitoring only.
+    for (const e of ME2026_EXISTING_ENRICHMENTS) {
+      const row = await ctx.db
+        .query("actors")
+        .withIndex("by_slug", (q) => q.eq("slug", e.slug))
+        .first();
+      if (!row) continue;
+      const mergedAliases = Array.from(new Set([...(row.aliases ?? []), ...e.aliases]));
+      const dims = ["", "", "", e.dims[0], "", e.dims[1], e.dims[2], "", "", "", "", "", "", "", "", e.dims[3]];
+      await ctx.db.patch(row._id, {
+        aliases: mergedAliases,
+        decisionCycle: buildDecisionCycle(dims),
+        monitoring: buildMonitoring(dims, e.src),
+      });
+      enriched += 1;
+    }
+
+    await setDone(ctx, ME_ACTORS_KEY, `added=${added}, enriched=${enriched}`);
+    return { added, enriched };
+  },
+});
+
+function edgeEvent(e: Me2026Edge, relTs: number) {
+  const type = e.type ?? "POSTURE";
+  const isObserved = e.srcs.length >= 2;
+  const title = e.title ?? `${e.s} → ${e.t}: ${e.kind}`;
+  return {
+    timestamp: relTs,
+    type,
+    title,
+    summary: e.summary,
+    confidence: Math.max(55, Math.min(92, e.w - 2)),
+    claimType: (isObserved ? "OBSERVED_FACT" : "REPORTED_CLAIM") as
+      | "OBSERVED_FACT"
+      | "REPORTED_CLAIM",
+    sources: resolveSources(e.srcs),
+  };
+}
+
+export const ingestMe2026Rels = mutation({
+  args: { start: v.optional(v.number()) },
+  handler: async (ctx, { start = 0 }) => {
+    const now = dbNow();
+    const all: Me2026Edge[] = [...ME2026_MATRIX, ...ME2026_BLOCK_EDGES, ...ME2026_FLASH_EDGES];
+
+    // Pre-req guard: actors must exist first.
+    const done = await ctx.db
+      .query("appSettings")
+      .withIndex("by_key", (q) => q.eq("key", ME_ACTORS_KEY))
+      .first();
+    if (!done) return { done: 0, added: 0, total: all.length, blocked: "run ingestMe2026Actors first" };
+
+    // Slug map for id resolution (dataset id → slug).
+    const slugOf = (id: string) => ME2026_SLUG[id] ?? id.toLowerCase();
+    const missing: string[] = [];
+    for (const e of all) {
+      for (const id of [e.s, e.t]) {
+        const slug = slugOf(id);
+        const a = await ctx.db
+          .query("actors")
+          .withIndex("by_slug", (q) => q.eq("slug", slug))
+          .first();
+        if (!a && !missing.includes(slug)) missing.push(slug);
+      }
+    }
+    if (missing.length > 0) return { done: 0, added: 0, total: all.length, blocked: missing.join(",") };
+
+    // Cursor-batched processing; caller re-invokes until done === total.
+    const slice = all.slice(start, start + ME_CHUNK);
+    let added = 0;
+    for (const e of slice) {
+      const sSlug = slugOf(e.s);
+      const tSlug = slugOf(e.t);
+      const relTs = latestSourceTs(e.srcs);
+      const ev = edgeEvent(e, relTs);
+
+      // Directional upsert: exact (source, target) pair.
+      const pair = await ctx.db
+        .query("relationships")
+        .withIndex("by_pair", (q) => q.eq("sourceSlug", sSlug).eq("targetSlug", tSlug))
+        .first();
+      let relId: any;
+      if (pair) {
+        // Merge intensity/confidence upward; keep earlier kind unless the
+        // incoming edge is stronger (conflict kinds dominate).
+        const stronger =
+          e.kind === "CONFLICT" || e.w >= pair.weight ? e.kind : pair.kind;
+        const weight = Math.max(pair.weight, e.w);
+        const confidence = Math.max(pair.confidence, ev.confidence);
+        const status =
+          pair.status === "CONFIRMED" || isObservedEdge(e)
+            ? ("CONFIRMED" as const)
+            : ("REPORTED" as const);
+        await ctx.db.patch(pair._id, {
+          kind: stronger,
+          weight,
+          confidence,
+          status,
+          updatedAt: Math.max(pair.updatedAt, relTs),
+          sourceCount: pair.sourceCount + 1,
+          summary:
+            pair.summary.length > 20 && pair.summary !== e.summary
+              ? `${pair.summary} ‖ ${e.summary}`.slice(0, 600)
+              : e.summary,
+        });
+        relId = pair._id;
+      } else {
+        relId = await ctx.db.insert("relationships", {
+          sourceSlug: sSlug,
+          targetSlug: tSlug,
+          kind: e.kind,
+          weight: e.w,
+          confidence: ev.confidence,
+          status: isObservedEdge(e) ? ("CONFIRMED" as const) : ("REPORTED" as const),
+          since: relTs,
+          updatedAt: relTs,
+          sourceCount: 1,
+          summary: e.summary,
+        });
+        await ctx.db.insert("changeLog", {
+          kind: "EDGE_ADDED",
+          slug: sSlug,
+          otherSlug: tSlug,
+          relationId: relId,
+          detail: `ME2026: ${e.kind} ${sSlug} ↔ ${tSlug} established from evidence`,
+          ts: now,
+        });
+      }
+      await ctx.db.insert("relationEvents", { relationId: relId, ...ev });
+      added += 1;
+    }
+
+    const doneCount = start + added;
+    if (doneCount >= all.length) {
+      await setDone(ctx, ME_RELS_KEY, `edges=${all.length}`);
+    }
+    return { done: doneCount, added, total: all.length };
+  },
+});
+
+function isObservedEdge(e: Me2026Edge) {
+  return e.srcs.length >= 2;
+}
+
+// One-click orchestration for the client: run actors once, then loop rels.
+export const ingestMe2026Status = query({
+  args: {},
+  handler: async (ctx) => {
+    const actors = await ctx.db
+      .query("appSettings")
+      .withIndex("by_key", (q) => q.eq("key", ME_ACTORS_KEY))
+      .first();
+    const rels = await ctx.db
+      .query("appSettings")
+      .withIndex("by_key", (q) => q.eq("key", ME_RELS_KEY))
+      .first();
+    return { actorsDone: Boolean(actors), relsDone: Boolean(rels) };
   },
 });

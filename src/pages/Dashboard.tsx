@@ -1213,6 +1213,10 @@ export default function Dashboard() {
   const stats = useQuery(api.graph.getStats);
   const markerData = useQuery(api.graph.getEventMarkers);
   const seed = useMutation(api.graph.seedIfEmpty);
+  // ME2026 strategic mapping: 57 actors + ~150 sourced edges, ingested
+  // idempotently after the base seed (actors pass, then batched edge loop).
+  const ingestActors = useMutation(api.graph.ingestMe2026Actors);
+  const ingestRels = useMutation(api.graph.ingestMe2026Rels);
 
   // ── Phase 2 data ──
   const watchlist = useQuery(api.graph.getWatchlist);
@@ -1228,6 +1232,38 @@ export default function Dashboard() {
   useEffect(() => {
     if (needsSeed) void seed();
   }, [needsSeed, seed]);
+
+  // ME2026 pipeline: run the actor pass once the base seed exists, then loop
+  // the cursor-batched edge ingest until it reports done === total.
+  const meStatus = useQuery(api.graph.ingestMe2026Status, {});
+  const graphActorCount = graph?.actors.length ?? 0;
+  const [meRelCursor, setMeRelCursor] = useState(0);
+  const meActorsRunningRef = useRef(false);
+  const meRelsRunningRef = useRef(false);
+  useEffect(() => {
+    if (!graph || graphActorCount === 0) return;
+    if (!meStatus || meStatus.actorsDone || meStatus.relsDone) return;
+    if (meActorsRunningRef.current) return;
+    meActorsRunningRef.current = true;
+    void ingestActors({})
+      .then(() => setMeRelCursor(0))
+      .finally(() => {
+        meActorsRunningRef.current = false;
+      });
+  }, [graph, graphActorCount, meStatus, ingestActors]);
+  useEffect(() => {
+    if (!graph || graphActorCount === 0) return;
+    if (!meStatus || !meStatus.actorsDone || meStatus.relsDone) return;
+    if (meRelsRunningRef.current) return;
+    meRelsRunningRef.current = true;
+    void ingestRels({ start: meRelCursor })
+      .then((r: { done: number; total: number }) => {
+        if (r && r.done < r.total) setMeRelCursor(r.done);
+      })
+      .finally(() => {
+        meRelsRunningRef.current = false;
+      });
+  }, [graph, graphActorCount, meStatus, meRelCursor, ingestRels]);
 
   // E1: /dashboard?focus=<actorSlug> — deep link from the ThinkTanks board's
   // actor chips. Selects the actor once the graph has loaded.
