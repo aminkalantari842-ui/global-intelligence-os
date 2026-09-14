@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownWideNarrow,
   CheckCircle2,
+  Download,
   ExternalLink,
   Eye,
   EyeOff,
@@ -25,6 +26,7 @@ import {
   Play,
   Rows2,
   Rows3,
+  Scale,
   Search,
   Table2,
   X,
@@ -57,7 +59,16 @@ interface BoardItem {
   thinkTankSlug: string;
   topicFa: string;
   hasArticle: boolean;
+  autoTags?: string[];
+  lengthClass?: string | null;
+  actorSlugs?: string[];
 }
+
+const LENGTH_BADGE: Record<string, string> = {
+  BRIEF: "bg-slate-500/15 text-slate-600",
+  ANALYSIS: "bg-sky-500/15 text-sky-600",
+  MAJOR_REPORT: "bg-violet-500/15 text-violet-600",
+};
 
 // ─── Drag helpers (HTML5 dnd on headers) ────────────────────────────────────
 
@@ -87,6 +98,7 @@ function TopicColumn({
   onDropOn,
   onOpen,
   onSaveShortcut,
+  onOpenActor,
   onResize,
   listLabel,
   inList,
@@ -108,6 +120,7 @@ function TopicColumn({
   onOpen: (item: BoardItem) => void;
   onSaveShortcut: (item: BoardItem) => void;
   onResize: (width: number) => void;
+  onOpenActor: (slug: string) => void;
   listLabel: string;
   inList: Set<string>;
 }) {
@@ -247,6 +260,32 @@ function TopicColumn({
                     {item.summary}
                   </p>
                 )}
+                {/* C2 tags + C3 length class + E1 actor chips */}
+                {!compact && ((item.autoTags?.length ?? 0) > 0 || item.lengthClass) && (
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    {item.lengthClass && (
+                      <span className={`rounded-sm px-1 py-px text-[7.5px] font-bold uppercase ${LENGTH_BADGE[item.lengthClass] ?? ""}`}>
+                        {item.lengthClass === "MAJOR_REPORT" ? t("board.lenMajor") : item.lengthClass === "ANALYSIS" ? t("board.lenAnalysis") : t("board.lenBrief")}
+                      </span>
+                    )}
+                    {item.autoTags?.slice(0, 2).map((tag) => (
+                      <span key={tag} className="rounded-full border border-border/70 px-1 py-px text-[8px] text-muted-foreground">{tag}</span>
+                    ))}
+                    {item.actorSlugs?.slice(0, 3).map((slug) => (
+                      <button
+                        key={slug}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenActor(slug);
+                        }}
+                        className="rounded-full bg-sky-500/10 px-1.5 py-px text-[8px] font-medium text-sky-600 transition-colors hover:bg-sky-500/25"
+                        title={t("board.openInGraph")}
+                      >
+                        {slug} →
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <p className={`mt-1 flex items-center gap-1.5 text-[9px] text-muted-foreground`}>
                   {reading && <FileText className="size-2.5 shrink-0 text-emerald-600" />}
                   {sortMode === "priority" && <span className="w-2 shrink-0" />}
@@ -260,19 +299,31 @@ function TopicColumn({
                   {idx === 0 && <span className="shrink-0 font-semibold text-sky-600">•</span>}
                 </p>
               </button>
-              {/* Hover action: save to list */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSaveShortcut(item);
-                }}
-                title={listLabel}
-                className={`absolute end-1.5 top-1.5 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-sky-600 group-hover:opacity-100 ${
-                  saved ? "!opacity-100 text-sky-600" : ""
-                }`}
-              >
-                <LayoutList className="size-3" />
-              </button>
+              {/* Hover action: save to list + add to compare */}
+              <span className="absolute end-1.5 top-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.dispatchEvent(new CustomEvent("board:compare-toggle", { detail: item._id }));
+                  }}
+                  title={t("board.compare")}
+                  className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-violet-600"
+                >
+                  <Scale className="size-3" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSaveShortcut(item);
+                  }}
+                  title={listLabel}
+                  className={`rounded p-1 text-muted-foreground hover:bg-muted hover:text-sky-600 ${
+                    saved ? "!opacity-100 text-sky-600" : ""
+                  }`}
+                >
+                  <LayoutList className="size-3" />
+                </button>
+              </span>
             </div>
           );
         })}
@@ -308,6 +359,130 @@ function TopicColumn({
         title={t("board.resize")}
       />
     </section>
+  );
+}
+
+// ─── J1 Export menu (CSV/JSON of the current corpus window) ─────────────────
+
+function ExportMenu() {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  // Reactive query: newest 30 days as CSV (regenerated server-side each call).
+  const exportCsv = useQuery(api.enrichment.exportCorpus, { days: 30, format: "csv" });
+  const exportJson = useQuery(api.enrichment.exportCorpus, { days: 30, format: "json" });
+  const [busy, setBusy] = useState(false);
+
+  const download = (mime: string, body: string, ext: string) => {
+    const blob = new Blob(["\ufeff" + body], { type: mime });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `corpus-${new Date().toISOString().slice(0, 10)}.${ext}`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const doExport = async (format: "csv" | "json") => {
+    setBusy(true);
+    setOpen(false);
+    try {
+      const row = format === "csv" ? exportCsv : exportJson;
+      if (!row) return;
+      download(row.mime, row.body, format);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <span className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1 rounded-md border px-1.5 py-1 text-[9px] transition-colors ${
+          open ? "border-emerald-500/60 bg-emerald-500/10 text-emerald-600" : "text-muted-foreground hover:text-foreground"
+        }`}
+        title={t("board.export")}
+      >
+        <Download className="size-3" /> {t("board.export")}
+      </button>
+      {open && (
+        <div className="absolute end-0 top-8 z-50 w-40 rounded-lg border border-border bg-card p-1 shadow-xl">
+          <button
+            onClick={() => void doExport("csv")}
+            disabled={busy || !exportCsv}
+            className="block w-full rounded px-2 py-1.5 text-start text-[11px] hover:bg-muted disabled:opacity-50"
+          >
+            CSV · 30d · {exportCsv?.count ?? "…"} {t("board.exportRows")}
+          </button>
+          <button
+            onClick={() => void doExport("json")}
+            disabled={busy || !exportJson}
+            className="block w-full rounded px-2 py-1.5 text-start text-[11px] hover:bg-muted disabled:opacity-50"
+          >
+            JSON · 30d
+          </button>
+        </div>
+      )}
+    </span>
+  );
+}
+
+// ─── I4 Compare workbench (multi-article AI compare) ───────────────────────
+
+export function CompareBar() {
+  const { t, lang } = useI18n();
+  const [sel, setSel] = useState<string[]>([]);
+  const compare = useAction(api.aiAnalysis.compareArticles);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    const onToggle = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      setSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length < 4 ? [...s, id] : s));
+    };
+    window.addEventListener("board:compare-toggle", onToggle);
+    return () => window.removeEventListener("board:compare-toggle", onToggle);
+  }, []);
+
+  if (sel.length === 0 && !result && !err) return null;
+  return (
+    <div
+      className="fixed bottom-4 left-1/2 z-[60] -translate-x-1/2 rounded-xl border border-violet-500/40 bg-background/95 px-4 py-2 shadow-xl backdrop-blur"
+      dir={lang === "fa" ? "rtl" : "ltr"}
+    >
+      <div className="flex items-center gap-2 text-[11px]">
+        <Scale className="size-3.5 text-violet-500" />
+        <span>{sel.length} {t("board.compareSelected")}</span>
+        <button
+          onClick={async () => {
+            setBusy(true);
+            setErr("");
+            try {
+              const r = await compare({ pubIds: sel as never });
+              setResult(r.text);
+            } catch (e) {
+              setErr(e instanceof Error ? e.message.slice(0, 90) : "error");
+            } finally {
+              setBusy(false);
+            }
+          }}
+          disabled={sel.length < 2 || busy}
+          className="rounded-full bg-violet-600 px-3 py-1 text-[10.5px] font-medium text-white disabled:opacity-40"
+        >
+          {busy ? <Loader2 className="size-3 animate-spin" /> : t("board.compareRun")}
+        </button>
+        <button onClick={() => { setSel([]); setResult(null); setErr(""); }} className="rounded p-0.5 text-muted-foreground hover:text-foreground" aria-label="clear">
+          <X className="size-3" />
+        </button>
+      </div>
+      {(result || err) && (
+        <div className="mt-2 max-h-64 w-[560px] max-w-[90vw] overflow-y-auto rounded-lg border border-violet-500/30 bg-card p-3 text-start">
+          <p className="mb-1 text-[9px] font-bold uppercase tracking-widest text-violet-600">ASSESSMENT · {t("board.compare")}</p>
+          {err ? <p className="text-[11px] text-red-500">{err}</p> : <p className="whitespace-pre-wrap text-[11.5px] leading-6">{result}</p>}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -461,6 +636,11 @@ export default function TopicBoard() {
       return next;
     });
   };
+
+  // E1: actor chip → graph console focused on that actor.
+  const onOpenActor = useCallback((slug: string) => {
+    window.open(`/dashboard?focus=${encodeURIComponent(slug)}`, "_self");
+  }, []);
 
   const activeTab = useMemo(() => tabs.find((tb) => tb.key === activeKey) ?? null, [tabs, activeKey]);
 
@@ -660,6 +840,8 @@ export default function TopicBoard() {
             <ArrowDownWideNarrow className="size-3" />
             {sortMode === "priority" ? t("board.sort.priority") : t("board.sort.recent")}
           </button>
+          {/* J1 corpus export: CSV / JSON of the current topic window */}
+          <ExportMenu />
           {/* Full-text search */}
           <div className="relative">
             <Search className="absolute start-2 top-1.5 size-3 text-muted-foreground" />
@@ -775,6 +957,7 @@ export default function TopicBoard() {
               }}
               onOpen={(item) => onOpenItem(item)}
               onSaveShortcut={(item) => void saveToList(item)}
+              onOpenActor={onOpenActor}
               onResize={(w) => {
                 const next = { ...widths, [id]: w };
                 setWidths(next);
@@ -849,6 +1032,9 @@ export default function TopicBoard() {
           </div>
         )}
       </div>
+
+      {/* I4 compare workbench floating bar */}
+      <CompareBar />
 
       {/* List picker modal */}
       {listPicker && (

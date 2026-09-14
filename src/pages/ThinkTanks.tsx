@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import TopicBoard from "@/components/board/TopicBoard";
 import { WorldStrip } from "@/components/board/BoardVisuals";
+import { Signals } from "@/components/board/Signals";
+import { SourcesManager } from "@/components/board/SourcesManager";
 import {
   ExternalLink,
   RefreshCw,
@@ -22,6 +24,7 @@ import {
   Filter,
   Languages,
   Layers,
+  Radar,
   Star,
 } from "lucide-react";
 
@@ -231,6 +234,9 @@ export default function ThinkTanks() {
   const [batchKey, setBatchKey] = useState(0); // bump → TranslationBlocks auto-open
   // "board" = Persian topic columns · "list" = classic publication list
   const [view, setView] = useState<"board" | "list">("board");
+  // A1/A2 source catalog modal + B/E/H signals strip
+  const [showSources, setShowSources] = useState(false);
+  const [showSignals, setShowSignals] = useState(false);
 
   const syncRegistry = useMutation(api.thinkTankSeed.syncRegistry);
 
@@ -263,7 +269,7 @@ export default function ThinkTanks() {
     setRefreshing(true);
     setStatusMsg(null);
     try {
-      const result = await refreshFeeds();
+      const result = await refreshFeeds({});
       setStatusMsg(
         `${result.refreshed}/${result.total} ${t("tt.feedActive")} · +${result.inserted}`,
       );
@@ -318,6 +324,20 @@ export default function ThinkTanks() {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowSources(true)}
+              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <Building2 className="size-3" /> {t("tt.sources")}
+            </button>
+            <button
+              onClick={() => setShowSignals((v) => !v)}
+              className={`flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors ${
+                showSignals ? "border-sky-500/60 bg-sky-500/10 text-sky-600" : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Radar className="size-3" /> {t("tt.signals")}
+            </button>
             <Link to="/dashboard">
               <Button variant="ghost" size="sm" className="text-xs">
                 {t("nav.graph")}
@@ -422,6 +442,13 @@ export default function ThinkTanks() {
               <Clock className="size-3" />
             )}
             {syncing ? t("tt.syncRegistry") : statusMsg}
+          </div>
+        )}
+
+        {/* B/E/H signals strip (collapsible) */}
+        {showSignals && (
+          <div className="mb-3 shrink-0">
+            <Signals />
           </div>
         )}
 
@@ -902,6 +929,9 @@ export default function ThinkTanks() {
         </>
         )}
       </main>
+
+      {/* A1/A2 source catalog + health manager */}
+      {showSources && <SourcesManager onClose={() => setShowSources(false)} />}
     </div>
   );
 }

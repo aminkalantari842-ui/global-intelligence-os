@@ -11,6 +11,8 @@ const backfillRef: any = internal.translations.backfill;
 const articlesRef: any = internal.articles.autoTranslateBatch;
 const alertsRef: any = internal.alerts;
 const snapshotRef: any = internal.alerts;
+const enrichRef: any = internal.enrichment;
+const contentAlertsRef: any = internal.contentAlerts;
 crons.interval(
   "Refresh think tank RSS feeds",
   { hours: 6 },
@@ -53,6 +55,29 @@ crons.daily(
   "Write actor snapshots",
   { hourUTC: 0, minuteUTC: 20 },
   (snapshotRef as { writeSnapshots: any }).writeSnapshots,
+);
+
+// Enrichment: auto-tags, key claims, content hashes, author pages (idempotent,
+// newest-first). Runs hourly so the board badges stay fresh.
+crons.interval(
+  "Enrich recent publications",
+  { hours: 1 },
+  (enrichRef as { enrichRecent: any }).enrichRecent,
+);
+
+// Content alerts: keyword/actor/posture rules over the newest publications,
+// deduped per rule+article pair.
+crons.interval(
+  "Evaluate content alert rules",
+  { hours: 2 },
+  (contentAlertsRef as { evaluateContentRules: any }).evaluateContentRules,
+);
+
+// A6: nightly cross-post detection over the last 30 days (bounded per run).
+crons.daily(
+  "Scan duplicate publications",
+  { hourUTC: 2, minuteUTC: 40 },
+  (enrichRef as { scanDuplicates: any }).scanDuplicates,
 );
 
 export default crons;

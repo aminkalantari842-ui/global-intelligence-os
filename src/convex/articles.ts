@@ -469,6 +469,9 @@ export interface BoardItemV3 extends BoardItem {
   triage: "UNREAD" | "READING" | "READ"; // deterministic from readingStates
   progress: number; // 0..1
   priority: number; // deterministic 0..100
+  autoTags: string[]; // C2 deterministic vocabulary tags
+  lengthClass: "BRIEF" | "ANALYSIS" | "MAJOR_REPORT" | null; // C3
+  actorSlugs: string[]; // E1 clickable graph links (max 3)
 }
 
 const TIER_BOOST: Record<string, number> = { S: 40, "A+": 32, A: 24, "B+": 16 };
@@ -511,6 +514,11 @@ export const getTopicFeedV3 = query({
       const priority = Math.min(100, (TIER_BOOST[tier] ?? 16) + recency);
       const tri = rs?.triage ?? "UNREAD";
       if (triage && tri !== triage) continue;
+      // E1: actor mentions for this publication (clickable → graph).
+      const mentions = await ctx.db
+        .query("actorMentions")
+        .withIndex("by_pub", (q) => q.eq("pubId", pub._id))
+        .take(3);
       out.push({
         _id: pub._id,
         title: pub.title,
@@ -523,6 +531,9 @@ export const getTopicFeedV3 = query({
         triage: tri,
         progress: rs?.progress ?? 0,
         priority: Math.round(priority),
+        autoTags: pub.autoTags ?? [],
+        lengthClass: pub.lengthClass ?? null,
+        actorSlugs: mentions.map((m) => m.actorSlug),
       });
       if (out.length >= (limit ?? 30)) break;
     }

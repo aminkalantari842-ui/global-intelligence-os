@@ -20,6 +20,27 @@ import {
 } from "lucide-react";
 import { toFaDigits } from "@/components/graph/metrics";
 import { EvidenceFlow } from "./EvidenceFlow";
+import { AiPanel } from "./AiPanel";
+
+/** C5 key claims — deterministic sentence scoring, cached on the publication. */
+function KeyClaims({ pubId }: { pubId: string }) {
+  const { t, lang } = useI18n();
+  const pub = useQuery(api.articles.getPubClaims, { pubId: pubId as never });
+  if (!pub?.keyClaims?.length) return null;
+  return (
+    <div className="border-b border-border px-4 py-2.5">
+      <p className="mb-1.5 text-[9px] font-semibold uppercase tracking-widest text-amber-600">{t("board.keyClaims")}</p>
+      <ul className="space-y-1" dir={lang === "fa" ? "rtl" : "ltr"}>
+        {pub.keyClaims.slice(0, 3).map((c, i) => (
+          <li key={i} className="flex items-start gap-1.5 text-[11px] leading-5 text-muted-foreground">
+            <span className="mt-1 size-1.5 shrink-0 rounded-full bg-amber-500" />
+            <span className="line-clamp-2">{c}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export interface ReaderTabData {
   titleFa: string;
@@ -276,6 +297,12 @@ export default function EnhancedReader({
           </button>
         </div>
       </div>
+
+      {/* C5 pre-marked key claims (deterministic scoring) */}
+      <KeyClaims pubId={tab.pubId} />
+
+      {/* D-layer per-article AI analysis + K-layer provenance */}
+      {tab.data && !tab.loading && <AiPanel pubId={tab.pubId} />}
 
       {/* Article → graph evidence flow (AI proposes, analyst commits) */}
       {tab.data && (

@@ -4,7 +4,7 @@ import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { useI18n } from "@/i18n/context";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
+import { Link, useNavigate, useSearchParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import ActorGraph from "@/components/graph/ActorGraph";
@@ -1228,6 +1228,19 @@ export default function Dashboard() {
   useEffect(() => {
     if (needsSeed) void seed();
   }, [needsSeed, seed]);
+
+  // E1: /dashboard?focus=<actorSlug> — deep link from the ThinkTanks board's
+  // actor chips. Selects the actor once the graph has loaded.
+  const [searchParams] = useSearchParams();
+  const focusParam = searchParams.get("focus");
+  const focusAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!focusParam || focusAppliedRef.current || !graph) return;
+    if (graph.actors.some((a) => a.slug === focusParam)) {
+      setSelectedSlug(focusParam);
+      focusAppliedRef.current = true;
+    }
+  }, [focusParam, graph]);
 
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<GraphRelation | null>(null);
