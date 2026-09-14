@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { toFaDigits } from "@/components/graph/metrics";
+import { EvidenceFlow } from "./EvidenceFlow";
 
 export interface ReaderTabData {
   titleFa: string;
@@ -275,6 +276,15 @@ export default function EnhancedReader({
           </button>
         </div>
       </div>
+
+      {/* Article → graph evidence flow (AI proposes, analyst commits) */}
+      {tab.data && (
+        <EvidenceFlow
+          pubId={tab.pubId}
+          title={tab.data.titleFa || tab.title}
+          text={tab.data.textFa || tab.data.textEn || ""}
+        />
+      )}
 
       {/* Body — split or single */}
       <div className="flex min-h-0 flex-1">
