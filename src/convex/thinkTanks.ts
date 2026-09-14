@@ -1,6 +1,8 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { classifyTopicFa } from "./articles";
+import { lengthClassOf } from "./enrichment";
+import { slugifyName } from "./lib";
 
 export const listEnabled = query({
   args: {},
@@ -19,8 +21,123 @@ export const getBySlug = query({
 export const updateFetched = mutation({
   args: { slug: v.string(), ts: v.number() },
   handler: async (ctx, { slug, ts }) => {
-    const tank = await ctx.db.query("thinkTanks").withIndex("by_slug", (q) => q.eq("slug", slug)).unique();
-    if (tank) await ctx.db.patch(tank._id, { lastFetched: ts });
+    const tank = await ctx.db.query("thinkTanks").withIndex("by_slug", (q) => q.eq("slug", slug)).unique();      if (tank) await ctx.db.patch(tank._id, { lastFetched: ts });
+  },
+});
+
+// ─── A2 Source-catalog CRUD + health (deterministic counters) ──────────
+
+/** Record one fetch outcome. Called by rssIngest after each attempt. */
+export const recordHealth = mutation({
+  args: {
+    tankSlug: v.string(),
+    ok: v.boolean(),
+    latencyMs: v.number(),
+    itemCount: v.number(),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, { tankSlug, ok, latencyMs, itemCount, error }) => {
+    const tank = await ctx.db
+      .query("thinkTanks")
+      .withIndex("by_slug", (q) => q.eq("slug", tankSlug))
+      .unique();
+    if (!tank) return;
+    const streak = ok ? 0 : (tank.errorStreak ?? 0) + 1;
+    await ctx.db.patch(tank._id, {
+      lastLatencyMs: latencyMs,
+      lastItemCount: itemCount,
+      errorStreak: streak,
+      lastError: ok ? undefined : (error ?? "failed").slice(0, 160),
+    });
+  },
+});
+
+/** Full catalog including disabled sources (managers' view). */
+export const listAllSources = query({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db.query("thinkTanks").withIndex("by_slug").collect();
+  },
+});
+
+/** Add a source from the UI. Duplicate slugs are rejected. */
+export const addSource = mutation({
+  args: {
+    name: v.string(),
+    country: v.string(),
+    region: v.string(),
+    website: v.optional(v.string()),
+    feedUrl: v.string(),
+    feedType: v.union(v.literal("RSS"), v.literal("ATOM"), v.literal("SITEMAP"), v.literal("SCRAPE")),
+    tier: v.optional(v.string()),
+    clusters: v.optional(v.array(v.string())),
+    description: v.optional(v.string()),
+  },
+  handler: async (ctx, a) => {
+    const slug = slugifyName(a.name);
+    const existing = await ctx.db
+      .query("thinkTanks")
+      .withIndex("by_slug", (q) => q.eq("slug", slug))
+      .unique();
+    if (existing) throw new Error("SOURCE_EXISTS");
+    return await ctx.db.insert("thinkTanks", {
+      slug,
+      name: a.name.trim().slice(0, 160),
+      country: a.country.trim().slice(0, 80),
+      region: a.region.trim().slice(0, 80),
+      website: a.website?.trim() || undefined,
+      feedUrl: a.feedUrl.trim(),
+      feedType: a.feedType,
+      enabled: true,
+      tier: a.tier,
+      clusters: a.clusters,
+      description: (a.description ?? "").trim().slice(0, 400) || "Added from the source catalog.",
+      addedBy: "USER",
+      custom: true,
+      errorStreak: 0,
+    });
+  },
+});
+
+/** Edit an existing source's connection fields. */
+export const updateSource = mutation({
+  args: {
+    id: v.id("thinkTanks"),
+    name: v.optional(v.string()),
+    feedUrl: v.optional(v.string()),
+    feedType: v.optional(v.union(v.literal("RSS"), v.literal("ATOM"), v.literal("SITEMAP"), v.literal("SCRAPE"))),
+    tier: v.optional(v.string()),
+    clusters: v.optional(v.array(v.string())),
+    website: v.optional(v.string()),
+  },
+  handler: async (ctx, { id, ...patch }) => {
+    const clean: Record<string, unknown> = {};
+    if (patch.name !== undefined) clean.name = patch.name.trim().slice(0, 160);
+    if (patch.feedUrl !== undefined) clean.feedUrl = patch.feedUrl.trim();
+    if (patch.feedType !== undefined) clean.feedType = patch.feedType;
+    if (patch.tier !== undefined) clean.tier = patch.tier || undefined;
+    if (patch.clusters !== undefined) clean.clusters = patch.clusters;
+    if (patch.website !== undefined) clean.website = patch.website.trim() || undefined;
+    await ctx.db.patch(id, clean);
+  },
+});
+
+/** Enable/disable a source (disabled sources skip the cron). */
+export const toggleSource = mutation({
+  args: { id: v.id("thinkTanks"), enabled: v.boolean() },
+  handler: async (ctx, { id, enabled }) => {
+    await ctx.db.patch(id, { enabled });
+  },
+});
+
+/** Delete a user-added source (seed rows are protected). */
+export const deleteSource = mutation({
+  args: { id: v.id("thinkTanks") },
+  handler: async (ctx, { id }) => {
+    const tank = await ctx.db.get(id);
+    if (!tank) return;
+    if (!tank.custom) throw new Error("SEED_SOURCES_PROTECTED");
+    await ctx.db.delete(id);
   },
 });
 
@@ -212,11 +329,13 @@ export const ingestBatch = mutation({
         summary: v.string(),
         publishedAt: v.number(),
         topics: v.array(v.string()),
+        author: v.optional(v.string()),
       }),
     ),
     fetchedAt: v.number(),
+    latencyMs: v.optional(v.number()),
   },
-  handler: async (ctx, { tankSlug, items, fetchedAt }) => {
+  handler: async (ctx, { tankSlug, items, fetchedAt, latencyMs }) => {
     const pubIds: Array<{ id: any; text: string; ts: number }> = [];
     let inserted = 0;
 
@@ -234,6 +353,9 @@ export const ingestBatch = mutation({
         };
         // Classify on first sight only — topic assignment is immutable once set.
         if (!existing.topicFa) patch.topicFa = classifyTopicFa(item.title, item.summary);
+        // Fill enrichment fields on first sight too (immutable after set).
+        if (!existing.author && item.author) patch.author = item.author;
+        if (!existing.lengthClass) patch.lengthClass = lengthClassOf(item.summary);
         await ctx.db.patch(existing._id, patch);
         id = existing._id;
       } else {
@@ -242,19 +364,27 @@ export const ingestBatch = mutation({
           ...item,
           topicFa: classifyTopicFa(item.title, item.summary),
           fetchedAt,
+          lengthClass: lengthClassOf(item.summary),
         });
         inserted++;
       }
       pubIds.push({ id, text: `${item.title} ${item.summary}`.slice(0, 2000), ts: item.publishedAt });
     }
 
-    // Keep throttle metadata fresh only when the feed yielded items.
+    // Keep throttle metadata + health fresh only when the feed yielded items.
     if (items.length > 0) {
       const tank = await ctx.db
         .query("thinkTanks")
         .withIndex("by_slug", (q) => q.eq("slug", tankSlug))
         .unique();
-      if (tank) await ctx.db.patch(tank._id, { lastFetched: fetchedAt });
+      if (tank)
+        await ctx.db.patch(tank._id, {
+          lastFetched: fetchedAt,
+          errorStreak: 0,
+          lastError: undefined,
+          lastLatencyMs: latencyMs,
+          lastItemCount: items.length,
+        });
     }
 
     // Inline deterministic mention extraction (same logic as graph.ingestMentions).

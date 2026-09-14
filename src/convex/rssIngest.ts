@@ -1,4 +1,5 @@
 import { internalAction, action } from "./_generated/server";
+import { v } from "convex/values";
 import { api } from "./_generated/api";
 import { XMLParser } from "fast-xml-parser";
 
@@ -10,6 +11,7 @@ interface FeedItem {
   summary: string;
   publishedAt: number;
   topics: string[];
+  author?: string;
 }
 
 /** Stable browser-like UA — some CDNs reject unknown agents outright. */
@@ -34,7 +36,66 @@ function stripCdata(s: string): string {
   return s.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1");
 }
 
+/** Extract a plain-text author from RSS/Atom author fields. */
+function extractAuthor(raw: Record<string, unknown>): string | undefined {
+  const candidates: unknown[] = [
+    raw["dc:creator"],
+    raw.author,
+    (raw as Record<string, unknown>)["itunes:author"],
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) {
+      return stripCdata(c).replace(/<[^>]+>/g, "").trim().slice(0, 120);
+    }
+    if (c && typeof c === "object") {
+      const o = c as Record<string, unknown>;
+      const name = o.name ?? o["#text"];
+      if (typeof name === "string" && name.trim()) {
+        return stripCdata(name).trim().slice(0, 120);
+      }
+    }
+  }
+  return undefined;
+}
+
+/** Sitemap: newest <url> entries (loc + lastmod) as pseudo-items. */
+function parseSitemap(xml: string): FeedItem[] {
+  const items: FeedItem[] = [];
+  try {
+    const doc = xmlParser.parse(xml) as Record<string, unknown>;
+    const set = (doc.urlset as Record<string, unknown>)?.url;
+    const urls: Record<string, unknown>[] = set
+      ? Array.isArray(set) ? set : [set]
+      : [];
+    for (const u of urls) {
+      const loc = typeof u.loc === "string" ? u.loc.trim() : "";
+      if (!loc) continue;
+      const lastmod = typeof u.lastmod === "string" ? new Date(u.lastmod).getTime() : NaN;
+      const slugPart = loc.replace(/\/$/, "").split("/").pop() ?? "";
+      const title = decodeURIComponent(slugPart)
+        .replace(/[-_]+/g, " ")
+        .replace(/\.(html?|php|aspx)$/i, "")
+        .trim()
+        .slice(0, 160);
+      if (!title) continue;
+      items.push({
+        title,
+        link: loc,
+        summary: "",
+        publishedAt: Number.isFinite(lastmod) ? lastmod : Date.now(),
+        topics: [],
+      });
+    }
+  } catch {
+    /* skip malformed */
+  }
+  return items;
+}
+
 function parseFeed(xml: string): FeedItem[] {
+  // Sitemap detection first.
+  if (/<urlset/i.test(xml.slice(0, 500))) return parseSitemap(xml);
+
   const items: FeedItem[] = [];
   try {
     const doc = xmlParser.parse(xml) as Record<string, unknown>;
@@ -70,8 +131,11 @@ function parseFeed(xml: string): FeedItem[] {
             )
             .filter(Boolean)
             .slice(0, 5)
-        : [];
-      if (title && link) items.push({ title, link, summary, publishedAt, topics: categories });
+        : typeof catRaw === "string"
+          ? [stripCdata(catRaw).trim()]
+          : [];
+      const author = extractAuthor(raw);
+      if (title && link) items.push({ title, link, summary, publishedAt, topics: categories, author });
     }
   } catch {
     /* skip malformed feeds */
@@ -115,6 +179,8 @@ export interface TankFetchResult {
   ok: boolean;
   items: number;
   source: "primary" | "fallback" | "none";
+  latencyMs: number;
+  error?: string;
 }
 
 interface TankRow {
@@ -124,16 +190,24 @@ interface TankRow {
   feedUrl: string;
 }
 
-/** Core refresh shared by the public action and the cron. */
+/**
+ * Core refresh shared by the public action, single-tank action, and cron.
+ * Tracks per-source health: latency, item count, error streak, last error.
+ */
 async function refreshAllTanks(
   runQuery: (ref: unknown, args: object) => Promise<unknown>,
   runMutation: (ref: unknown, args: object) => Promise<unknown>,
+  onlySlug?: string,
 ): Promise<{ refreshed: number; failed: number; fallbackUsed: number; total: number; inserted: number; empty: TankFetchResult[] }> {
-  const tanks = (await runQuery(api.thinkTanks.listEnabled, {})) as TankRow[];
+  const allTanks = (await runQuery(api.thinkTanks.listEnabled, {})) as Array<
+    TankRow & { _id: unknown }
+  >;
+  const tanks = onlySlug ? allTanks.filter((t) => t.slug === onlySlug) : allTanks;
 
   let inserted = 0;
 
   const results: TankFetchResult[] = await pooled(tanks, 6, async (tank) => {
+    const t0 = Date.now();
     try {
       // 1) Primary feed
       let feedItems = await fetchFeed(tank.feedUrl);
@@ -148,10 +222,11 @@ async function refreshAllTanks(
         }
       }
 
+      const latencyMs = Date.now() - t0;
       const fresh = feedItems.slice(0, 25);
       if (fresh.length > 0) {
         // One batch mutation per tank: upserts + mention extraction +
-        // lastFetched update in a single function call (usage-optimized).
+        // lastFetched + health counters in a single function call.
         const res = (await runMutation(api.thinkTanks.ingestBatch, {
           tankSlug: tank.slug,
           items: fresh.map((item) => ({
@@ -160,14 +235,46 @@ async function refreshAllTanks(
             summary: item.summary,
             publishedAt: item.publishedAt,
             topics: item.topics,
+            author: item.author,
           })),
           fetchedAt: Date.now(),
+          latencyMs,
         })) as { inserted?: number } | null;
         inserted += res?.inserted ?? 0;
+      } else {
+        // Empty feed: record health, keep lastFetched untouched.
+        await runMutation(api.thinkTanks.recordHealth, {
+          tankSlug: tank.slug,
+          ok: false,
+          latencyMs,
+          itemCount: 0,
+          error: "empty feed",
+        });
       }
-      return { slug: tank.slug, name: tank.name, ok: fresh.length > 0, items: fresh.length, source: fresh.length > 0 ? source : "none" };
-    } catch {
-      return { slug: tank.slug, name: tank.name, ok: false, items: 0, source: "none" as const };
+      return {
+        slug: tank.slug,
+        name: tank.name,
+        ok: fresh.length > 0,
+        items: fresh.length,
+        source: fresh.length > 0 ? source : "none",
+        latencyMs,
+        error: fresh.length > 0 ? undefined : "empty feed",
+      };
+    } catch (err) {
+      const latencyMs = Date.now() - t0;
+      const error = err instanceof Error ? err.message.slice(0, 140) : "fetch failed";
+      try {
+        await runMutation(api.thinkTanks.recordHealth, {
+          tankSlug: tank.slug,
+          ok: false,
+          latencyMs,
+          itemCount: 0,
+          error,
+        });
+      } catch {
+        /* health row best-effort */
+      }
+      return { slug: tank.slug, name: tank.name, ok: false, items: 0, source: "none" as const, latencyMs, error };
     }
   });
 
@@ -184,15 +291,16 @@ async function refreshAllTanks(
 
 /** Public action: manually refresh all feeds from the UI. */
 export const refreshFeeds = action({
-  args: {},
-  handler: async (ctx) =>
+  args: { tankSlug: v.optional(v.string()) },
+  handler: async (ctx, { tankSlug }) =>
     refreshAllTanks(
       (ref, args) => ctx.runQuery(ref as never, args as never),
       (ref, args) => ctx.runMutation(ref as never, args as never),
+      tankSlug ?? undefined,
     ),
 });
 
-/** Internal action: called by cron every 2 hours. */
+/** Internal action: called by cron every 6 hours. */
 export const _cronRefresh = internalAction({
   args: {},
   handler: async (ctx) =>

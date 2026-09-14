@@ -187,11 +187,23 @@ const schema = defineSchema(
       region: v.string(),
       website: v.optional(v.string()),
       feedUrl: v.string(),
-      feedType: v.union(v.literal("RSS"), v.literal("ATOM")),
+      feedType: v.union(
+        v.literal("RSS"),
+        v.literal("ATOM"),
+        v.literal("SITEMAP"),
+        v.literal("SCRAPE"),
+      ),
       enabled: v.boolean(),
       tier: v.optional(v.string()), // "S" | "A+" | "A" | "B+"
       clusters: v.optional(v.array(v.string())),
       lastFetched: v.optional(v.number()),
+      // ─── A2 Per-source health monitor (deterministic counters) ───
+      errorStreak: v.optional(v.number()), // consecutive failed fetches
+      lastError: v.optional(v.string()),
+      lastLatencyMs: v.optional(v.number()),
+      lastItemCount: v.optional(v.number()),
+      addedBy: v.optional(v.string()), // "SEED" | "USER"
+      custom: v.optional(v.boolean()), // user-added source (deletable)
       description: v.string(),
     })
       .index("by_slug", ["slug"])
@@ -207,6 +219,18 @@ const schema = defineSchema(
       publishedAt: v.number(),
       topics: v.array(v.string()),
       fetchedAt: v.number(),
+      // A4 Author & program parsing (RSS <dc:creator> / byline).
+      author: v.optional(v.string()),
+      // C2 deterministic auto-tags (deterrence, cyber, sanctions…).
+      autoTags: v.optional(v.array(v.string())),
+      // C3 length class: brief <1800 chars, analysis <6000, major report ≥6000.
+      lengthClass: v.optional(
+        v.union(v.literal("BRIEF"), v.literal("ANALYSIS"), v.literal("MAJOR_REPORT")),
+      ),
+      // A6 cross-post detection (same content from two programs).
+      contentHash: v.optional(v.string()),
+      // C5 key-claim highlighting — top scored sentences, cached.
+      keyClaims: v.optional(v.array(v.string())),
       // Persian topic-column assignment from the deterministic classifier
       // (security / military / economy / ...). null until classified.
       topicFa: v.optional(v.string()),
@@ -624,6 +648,109 @@ const schema = defineSchema(
     })
       .index("by_pub", ["pubId"])
       .index("by_user", ["userId"]),
+
+    // ─── C4 Citation & reference harvesting (sources-of-sources) ──────
+    articleRefs: defineTable({
+      pubId: v.id("publications"),
+      url: v.string(),
+      kind: v.union(
+        v.literal("EXTERNAL"),
+        v.literal("INTERNAL"), // same domain as the tank
+        v.literal("GOV_MIL"), // .gov/.mil/official
+      ),
+    }).index("by_pub", ["pubId"]),
+
+    // ─── A4 Author & program pages (first-class entities) ────────────
+    authorPages: defineTable({
+      slug: v.string(), // slugified name
+      name: v.string(),
+      tankSlug: v.string(),
+      bio: v.optional(v.string()),
+      pubCount: v.number(),
+      lastPubAt: v.optional(v.number()),
+    }).index("by_slug", ["slug"]),
+
+    // ─── B4 Author watchlist ─────────────────────────────────────────
+    authorWatchlist: defineTable({
+      userId: v.string(),
+      authorSlug: v.string(),
+      createdAt: v.number(),
+    }).index("by_user", ["userId"]),
+
+    // ─── A6 Duplicate / cross-post candidates (deterministic scan) ───
+    dupCandidates: defineTable({
+      aId: v.id("publications"),
+      bId: v.id("publications"),
+      score: v.number(), // 0..1 shingle Jaccard
+      status: v.union(v.literal("OPEN"), v.literal("MERGED"), v.literal("REJECTED")),
+      ts: v.number(),
+    }).index("by_ts", ["ts"]),
+
+    // ─── H1 Content alert rules (saved queries, reuses alerts table) ──
+    contentAlertRules: defineTable({
+      userId: v.string(),
+      kind: v.union(v.literal("KEYWORD"), v.literal("ACTOR"), v.literal("TANK_SHIFT")),
+      value: v.string(), // keyword text / actorSlug / "tank:topic"
+      enabled: v.boolean(),
+      createdAt: v.number(),
+    }).index("by_user", ["userId"]),
+
+    // ─── H1/H2 fired content alerts (deduped per 12h bucket) ─────────
+    contentAlerts: defineTable({
+      ruleId: v.id("contentAlertRules"),
+      pubId: v.id("publications"),
+      title: v.string(),
+      detail: v.string(),
+      ts: v.number(),
+    }).index("by_ts", ["ts"]),
+
+    // ─── D-layer AI analysis artifacts (ASSESSMENT class) ────────────
+    // Every artifact stores its exact evidence anchor: pubId + model + ts.
+    // AI text is never merged into observed data (rule 4 & 5 preserved).
+    aiArtifacts: defineTable({
+      pubIds: v.array(v.id("publications")),
+      kind: v.union(
+        v.literal("BRIEF"),
+        v.literal("THESIS"),
+        v.literal("RED_TEAM"),
+        v.literal("SUMMARY"),
+        v.literal("COMPARE"),
+        v.literal("RADAR"),
+        v.literal("TREND"),
+        v.literal("DIGEST"),
+        v.literal("CORPUS_QA"),
+      ),
+      text: v.string(),
+      model: v.string(),
+      level: v.optional(v.string()), // summary level TLDR/EXEC/OUTLINE
+      query: v.optional(v.string()), // RADAR topic / TREND window / QA question
+      ts: v.number(),
+    }).index("by_pubs", ["pubIds"]),
+
+    // ─── E5 News wire registry (news–analysis delta view) ────────────
+    newsWires: defineTable({
+      slug: v.string(),
+      name: v.string(),
+      feedUrl: v.string(),
+      enabled: v.boolean(),
+    }).index("by_slug", ["slug"]),
+
+    newsItems: defineTable({
+      wireSlug: v.string(),
+      title: v.string(),
+      url: v.string(),
+      publishedAt: v.number(),
+      fetchedAt: v.number(),
+    })
+      .index("by_wire", ["wireSlug"])
+      .index("by_published", ["publishedAt"]),
+
+    // ─── J3 API/webhook out (push new publications) ─────────────────
+    appSettings: defineTable({
+      key: v.string(),
+      value: v.string(),
+      ts: v.number(),
+    }).index("by_key", ["key"]),
   },
   {
     schemaValidation: false,
