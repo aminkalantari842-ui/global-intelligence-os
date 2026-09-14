@@ -13,6 +13,9 @@ const alertsRef: any = internal.alerts;
 const snapshotRef: any = internal.alerts;
 const enrichRef: any = internal.enrichment;
 const contentAlertsRef: any = internal.contentAlerts;
+
+// E4 calibration is quadratic (publications × events) — precomputed into an
+// appSettings cache by rebuildCalibration; getCalibration is a cached read.
 crons.interval(
   "Refresh think tank RSS feeds",
   { hours: 6 },
@@ -78,6 +81,14 @@ crons.daily(
   "Scan duplicate publications",
   { hourUTC: 2, minuteUTC: 40 },
   (enrichRef as { scanDuplicates: any }).scanDuplicates,
+);
+
+// E4: refresh the leading/lagging calibration cache (bounded precompute; the
+// reactive query only reads the snapshot).
+crons.interval(
+  "Rebuild calibration cache",
+  { hours: 6 },
+  (enrichRef as { rebuildCalibration: any }).rebuildCalibration,
 );
 
 export default crons;

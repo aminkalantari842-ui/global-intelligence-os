@@ -446,36 +446,54 @@ export const getCoverageHeat = query({
 // For each tank: among its recent publications, how many contain content that
 // appears in a relationEvent within ±14d on the same pair — publications
 // BEFORE the event count as "leading" (they predicted/flagged it).
+//
+// The computation is quadratic (publications × events with shingle sets), so
+// it CANNOT run inside a reactive query: it exceeded Convex's 1s budget once
+// the event table grew (ME2026 ingest). Per the architecture rule — scores
+// are computed at ingest, never at render — `rebuildCalibration` precomputes
+// the table (bounded: 400 newest pubs × 300 newest events) and caches it in
+// appSettings; the query below is a pure cached read.
 
-export const getCalibration = query({
+export const rebuildCalibration = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const DAY2 = DAY;
-    const pubs = (await ctx.db.query("publications").collect()).filter(
-      (p) => p.publishedAt >= dbNow() - 120 * DAY2,
-    );
-    const events = await ctx.db.query("relationEvents").collect();
+    const pubs = (await ctx.db.query("publications").collect())
+      .filter((p) => p.publishedAt >= dbNow() - 90 * DAY)
+      .sort((a, b) => b.publishedAt - a.publishedAt)
+      .slice(0, 400);
+    const events = (await ctx.db.query("relationEvents").collect())
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 300);
     const eventTs = events.map((e) => e.timestamp);
-    const eventTexts = events.map((e) => `${e.title} ${e.summary}`.toLowerCase());
+    // Precompute each event's shingle sets ONCE (the render-time version
+    // regenerated them inside the loop — that was the timeout).
+    const eventSh4 = events.map((e) => shingles(`${e.title} ${e.summary}`, 4));
+    const eventSh3 = events.map((e) => shingles(`${e.title} ${e.summary}`, 3));
 
     const perTank: Record<string, { pubs: number; aligned: number; leading: number }> = {};
-    for (const p of pubs.slice(0, 800)) {
+    for (const p of pubs) {
       const s = (perTank[p.thinkTankSlug] ??= { pubs: 0, aligned: 0, leading: 0 });
       s.pubs++;
-      const hay = `${p.title} ${p.summary}`.toLowerCase();
-      // Lexical anchor: share ≥2 distinctive 4-grams with an event text.
-      const pSh = shingles(`${p.title} ${p.summary}`, 4);
-      for (let i = 0; i < eventTexts.length; i++) {
-        const eSh = shingles(eventTexts[i], 4);
-        let inter = 0;
-        for (const x of pSh) if (eSh.has(x)) inter++;
-        if (inter < 2) continue;
+      const text = `${p.title} ${p.summary}`;
+      const pSh4 = shingles(text, 4);
+      const pSh3 = shingles(text, 3);
+      for (let i = 0; i < eventSh4.length; i++) {
+        // High-precision lexical anchor: 1 shared 4-gram OR 2 shared 3-grams.
+        let inter4 = 0;
+        for (const x of pSh4) if (eventSh4[i].has(x)) inter4++;
+        let aligned = inter4 >= 1;
+        if (!aligned) {
+          let inter3 = 0;
+          for (const x of pSh3) if (eventSh3[i].has(x)) inter3++;
+          aligned = inter3 >= 2;
+        }
+        if (!aligned) continue;
         s.aligned++;
         if (p.publishedAt < eventTs[i]) s.leading++;
         break;
       }
     }
-    return Object.entries(perTank)
+    const rows = Object.entries(perTank)
       .map(([slug, s]) => ({
         slug,
         pubs: s.pubs,
@@ -486,6 +504,34 @@ export const getCalibration = query({
       .filter((r) => r.aligned >= 2)
       .sort((a, b) => b.leadingRate - a.leadingRate)
       .slice(0, 15);
+
+    const key = "calibration.snapshot";
+    const existing = await ctx.db
+      .query("appSettings")
+      .withIndex("by_key", (q) => q.eq("key", key))
+      .first();
+    const payload = JSON.stringify({ ts: dbNow(), rows });
+    if (existing) await ctx.db.patch(existing._id, { value: payload, ts: dbNow() });
+    else await ctx.db.insert("appSettings", { key, value: payload, ts: dbNow() });
+    return { rows: rows.length };
+  },
+});
+
+export const getCalibration = query({
+  args: {},
+  handler: async (ctx) => {
+    // O(1) cached read; populated by rebuildCalibration (cron, every 6h).
+    const snap = await ctx.db
+      .query("appSettings")
+      .withIndex("by_key", (q) => q.eq("key", "calibration.snapshot"))
+      .first();
+    if (!snap) return [];
+    try {
+      const parsed = JSON.parse(snap.value) as { ts: number; rows: Array<{ slug: string; pubs: number; aligned: number; leading: number; leadingRate: number }> };
+      return parsed.rows ?? [];
+    } catch {
+      return [];
+    }
   },
 });
 
