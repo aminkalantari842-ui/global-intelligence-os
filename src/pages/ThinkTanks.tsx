@@ -6,7 +6,6 @@ import { Link } from "react-router";
 import { aiErrorKey } from "@/lib/aiError";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import TopicBoard from "@/components/board/TopicBoard";
 import { WorldStrip } from "@/components/board/BoardVisuals";
 import { Signals } from "@/components/board/Signals";
@@ -27,6 +26,10 @@ import {
   Layers,
   Radar,
   Star,
+  Signal,
+  Activity,
+  Newspaper,
+  Database,
 } from "lucide-react";
 
 const REGION_MAP: Record<string, string> = {
@@ -47,13 +50,6 @@ const REGION_COLORS: Record<string, string> = {
   Africa: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
   Oceania: "bg-cyan-500/10 text-cyan-600 dark:text-cyan-400",
   "Latin America": "bg-lime-500/10 text-lime-600 dark:text-lime-400",
-};
-
-const TIER_MAP: Record<string, string> = {
-  S: "tt.tierS",
-  "A+": "tt.tierAPlus",
-  A: "tt.tierA",
-  "B+": "tt.tierBPlus",
 };
 
 const TIER_COLORS: Record<string, string> = {
@@ -85,15 +81,57 @@ function fmtDate(ts: number, fa: boolean) {
   });
 }
 
-function fmtRelative(ts: number) {
+function fmtRelative(ts: number, fa = false) {
   const diff = Date.now() - ts;
   const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return "now";
-  if (mins < 60) return `${mins}m`;
+  if (mins < 1) return fa ? "الان" : "now";
+  const n = fa ? mins.toLocaleString("fa-IR") : String(mins);
+  if (mins < 60) return fa ? `${n} دقیقه` : `${mins}m`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
+  const nh = fa ? hrs.toLocaleString("fa-IR") : String(hrs);
+  if (hrs < 24) return fa ? `${nh} ساعت` : `${hrs}h`;
   const days = Math.floor(hrs / 24);
-  return `${days}d`;
+  const nd = fa ? days.toLocaleString("fa-IR") : String(days);
+  return fa ? `${nd} روز` : `${days}d`;
+}
+
+/** Solid bg-* color for a region (dot / accent rail), derived from the chip map. */
+function regionSolid(region: string | undefined): string {
+  if (!region) return "bg-border";
+  const cls = REGION_COLORS[region]?.split(" ")[1]; // e.g. "text-blue-600"
+  return cls ? cls.replace("text-", "bg-") : "bg-border";
+}
+
+// ─── Shared bits ─────────────────────────────────────────────────────────────
+
+/** Section header: kicker + title + optional right slot. */
+function SectionHead({
+  kicker,
+  title,
+  icon: Icon,
+  right,
+}: {
+  kicker?: string;
+  title: string;
+  icon?: React.ComponentType<{ className?: string }>;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2.5">
+        {Icon && (
+          <span className="flex size-7 items-center justify-center rounded-lg border border-border/80 bg-muted/50">
+            <Icon className="size-3.5 text-muted-foreground" />
+          </span>
+        )}
+        <div>
+          {kicker && <p className="tt-kicker">{kicker}</p>}
+          <h2 className="text-sm font-semibold tracking-tight">{title}</h2>
+        </div>
+      </div>
+      {right}
+    </div>
+  );
 }
 
 /**
@@ -201,7 +239,7 @@ function TranslationBlock({
 
   return (
     <div
-      className="mt-2 rounded-md border-s-2 border-s-foreground/40 bg-muted/40 px-3 py-2"
+      className="mt-2 rounded-lg border-s-2 border-s-foreground/40 bg-muted/40 px-3 py-2"
       dir="rtl"
       onClick={(e) => {
         e.stopPropagation();
@@ -219,6 +257,8 @@ function TranslationBlock({
     </div>
   );
 }
+
+// ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function ThinkTanks() {
   const { t, lang } = useI18n();
@@ -304,41 +344,69 @@ export default function ThinkTanks() {
     });
   }, [tanks, regionFilter, tierFilter, clusterFilter]);
 
+  const fa = lang === "fa";
+  const num = (v: number | string) => (fa && typeof v === "number" ? v.toLocaleString("fa-IR") : String(v));
+
+  const statCards: Array<{ key: string; label: string; value: string; icon: React.ComponentType<{ className?: string }>; pulse?: boolean }> = stats
+    ? [
+        { key: "tanks", label: t("tt.institutions"), value: num(stats.tankCount), icon: Building2 },
+        { key: "total", label: t("tt.totalPubs"), value: num(stats.totalPubs.toLocaleString()), icon: Database },
+        { key: "day", label: t("tt.lastDay"), value: num(stats.pubsLastDay), icon: Activity, pulse: (stats.pubsLastDay ?? 0) > 0 },
+        { key: "week", label: t("tt.lastWeek"), value: num(stats.pubsLastWeek.toLocaleString()), icon: TrendingUp },
+        { key: "topics", label: t("tt.topTopics"), value: num(stats.topicCount), icon: Layers },
+        {
+          key: "refresh",
+          label: t("tt.autoRefresh"),
+          value: stats.lastRefresh > 0 ? `${fmtRelative(stats.lastRefresh, fa)} ${t("tt.ago")}` : t("tt.never"),
+          icon: Clock,
+        },
+      ]
+    : [];
+
   return (
     <div
-      className="min-h-screen bg-background text-foreground"
+      className="tt-atmosphere min-h-screen bg-background text-foreground"
       dir={lang === "fa" ? "rtl" : "ltr"}
     >
-      {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-border/70 bg-background/80 backdrop-blur">
-        <div className="mx-auto flex h-14 w-full max-w-7xl items-center justify-between px-4 sm:px-6">
+      {/* ── Command-desk masthead ─────────────────────────────────────────── */}
+      <header className="sticky top-0 z-40 border-b border-border/60 bg-background/70 backdrop-blur-xl">
+        <div className="mx-auto flex h-14 w-full max-w-[1680px] items-center justify-between px-4 sm:px-6">
           <div className="flex items-center gap-3">
             <Link to="/" className="flex items-center gap-2">
-              <span className="flex size-6 items-center justify-center rounded-md bg-foreground text-[10px] font-bold text-background">
+              <span className="flex size-7 items-center justify-center rounded-lg bg-foreground text-[10px] font-bold text-background">
                 GI
               </span>
               <span className="text-sm font-semibold tracking-tight">
                 {t("app.name")}
               </span>
             </Link>
-            <span className="text-xs text-muted-foreground">
-              / {t("tt.title")}
+            <span className="text-xs text-muted-foreground/70">/</span>
+            <span className="flex items-center gap-1.5 text-xs font-medium">
+              <Newspaper className="size-3.5 text-muted-foreground" />
+              {t("tt.title")}
+            </span>
+            {/* Live lamp */}
+            <span className="ms-2 hidden items-center gap-1.5 rounded-full border border-border/70 bg-muted/40 px-2 py-0.5 text-[9px] text-muted-foreground sm:flex">
+              <span className="tt-lamp size-1.5 rounded-full bg-emerald-500" />
+              {t("tt.feedActive")}
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               onClick={() => setShowSources(true)}
-              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+              className="flex items-center gap-1 rounded-lg border border-border/80 bg-card/60 px-2.5 py-1.5 text-[11px] text-muted-foreground transition-all hover:border-foreground/30 hover:text-foreground"
             >
-              <Building2 className="size-3" /> {t("tt.sources")}
+              <Building2 className="size-3.5" /> {t("tt.sources")}
             </button>
             <button
               onClick={() => setShowSignals((v) => !v)}
-              className={`flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] transition-colors ${
-                showSignals ? "border-sky-500/60 bg-sky-500/10 text-sky-600" : "border-border text-muted-foreground hover:text-foreground"
+              className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] transition-all ${
+                showSignals
+                  ? "border-sky-500/60 bg-sky-500/10 text-sky-600"
+                  : "border-border/80 bg-card/60 text-muted-foreground hover:border-foreground/30 hover:text-foreground"
               }`}
             >
-              <Radar className="size-3" /> {t("tt.signals")}
+              <Radar className={`size-3.5 ${showSignals ? "animate-pulse" : ""}`} /> {t("tt.signals")}
             </button>
             <Link to="/dashboard">
               <Button variant="ghost" size="sm" className="text-xs">
@@ -354,90 +422,91 @@ export default function ThinkTanks() {
         </div>
       </header>
 
-      <main className="mx-auto flex h-[calc(100vh-3.5rem)] w-full max-w-[1600px] flex-col px-4 py-4 sm:px-6">
-        {/* View switcher: topic board vs classic list */}
-        <div className="mb-3 flex shrink-0 items-center justify-between gap-3">
-          <div className="flex rounded-md border border-border p-0.5">
-            {(["board", "list"] as const).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={`rounded px-3 py-1 text-xs font-medium transition-colors ${
-                  view === v
-                    ? "bg-foreground text-background"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {v === "board" ? t("tt.viewBoard") : t("tt.viewList")}
-              </button>
-            ))}
-          </div>
-          <p className="hidden text-[10px] text-muted-foreground sm:block">
-            {t("board.hint")}
-          </p>
-        </div>
-        {/* Page header */}
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">
-              {t("tt.title")}
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              {t("tt.desc")}
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-col items-end gap-1.5">
-            <div className="flex items-center gap-2">
-              {lang === "fa" && pubs && pubs.length > 0 && (
+      <main className="mx-auto flex h-[calc(100vh-3.5rem)] w-full max-w-[1680px] flex-col px-4 py-4 sm:px-6">
+        {/* ── Hero: title + stat rail ──────────────────────────────────────── */}
+        <section className="tt-rise shrink-0">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <p className="tt-kicker">{t("tt.clusterFilter")} · OSINT</p>
+              <h1 className="mt-1 text-[26px] font-bold leading-tight tracking-tight">
+                {t("tt.title")}
+              </h1>
+              <p className="mt-1 max-w-2xl text-[13px] leading-6 text-muted-foreground">
+                {t("tt.desc")}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-col items-start gap-2 lg:items-end">
+              <div className="flex items-center gap-2">
+                {lang === "fa" && pubs && pubs.length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 text-xs"
+                    onClick={() => {
+                      setBatchDone(0);
+                      setBatchTotal(pubs.length);
+                      setBatchKey((k) => k + 1);
+                    }}
+                    disabled={refreshing || syncing || batchDone < batchTotal}
+                  >
+                    <Languages className="size-3.5" />
+                    {t("tt.translateVisible")}
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"
                   className="gap-1.5 text-xs"
-                  onClick={() => {
-                    setBatchDone(0);
-                    setBatchTotal(pubs.length);
-                    setBatchKey((k) => k + 1);
-                  }}
-                  disabled={refreshing || syncing || batchDone < batchTotal}
+                  onClick={handleRefresh}
+                  disabled={refreshing || syncing}
                 >
-                  <Languages className="size-3.5" />
-                  {t("tt.translateVisible")}
+                  {refreshing ? (
+                    <Loader2 className="size-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="size-3.5" />
+                  )}
+                  {t("tt.refreshAll")}
                 </Button>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-xs"
-                onClick={handleRefresh}
-                disabled={refreshing || syncing}
-              >
-                {refreshing ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="size-3.5" />
-                )}
-                {t("tt.refreshAll")}
-              </Button>
-            </div>
-            {batchTotal > 0 && (
-              <div className="flex w-44 items-center gap-2">
-                <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-foreground transition-all"
-                    style={{ width: `${(batchDone / batchTotal) * 100}%` }}
-                  />
-                </div>
-                <span className="text-[10px] tabular-nums text-muted-foreground">
-                  {batchDone}/{batchTotal}
-                </span>
               </div>
-            )}
+              {batchTotal > 0 && (
+                <div className="flex w-48 items-center gap-2">
+                  <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
+                    <div
+                      className="h-full rounded-full bg-emerald-500 transition-all duration-500"
+                      style={{ width: `${(batchDone / batchTotal) * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] tabular-nums text-muted-foreground">
+                    {num(batchDone)}/{num(batchTotal)}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+
+          {/* Stat rail */}
+          {statCards.length > 0 && (
+            <div className="tt-glass mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-xl sm:grid-cols-3 xl:grid-cols-6">
+              {statCards.map((s) => (
+                <div key={s.key} className="tt-stat group bg-card/55 px-4 py-3">
+                  <div className="flex items-center gap-1.5">
+                    <s.icon className={`size-3 text-muted-foreground/70 ${s.pulse ? "text-emerald-500" : ""}`} />
+                    <p className="truncate text-[9.5px] uppercase tracking-[0.14em] text-muted-foreground">
+                      {s.label}
+                    </p>
+                  </div>
+                  <p className="tt-stat-num mt-1 text-xl font-bold tabular-nums tracking-tight transition-colors">
+                    {s.value}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
         {/* Status message */}
         {(statusMsg || syncing) && (
-          <div className="mt-2 flex items-center gap-2 rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
+          <div className="tt-rise tt-rise-1 mt-2.5 flex items-center gap-2 rounded-lg border border-border/70 bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground">
             {syncing ? (
               <Loader2 className="size-3 animate-spin" />
             ) : (
@@ -447,488 +516,429 @@ export default function ThinkTanks() {
           </div>
         )}
 
+        {/* ── View switcher + signals rail ─────────────────────────────────── */}
+        <div className="mt-4 flex shrink-0 items-center justify-between gap-3">
+          <div className="flex rounded-xl border border-border/80 bg-card/60 p-1">
+            {(["board", "list"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition-all ${
+                  view === v
+                    ? "bg-foreground text-background shadow"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {v === "board" ? t("tt.viewBoard") : t("tt.viewList")}
+              </button>
+            ))}
+          </div>
+          <p className="hidden text-[10px] text-muted-foreground md:block">{t("board.hint")}</p>
+        </div>
+
         {/* B/E/H signals strip (collapsible) */}
         {showSignals && (
-          <div className="mb-3 shrink-0">
+          <div className="tt-rise mt-3 shrink-0">
             <Signals />
           </div>
         )}
 
         {view === "board" ? (
-          <TopicBoard />
-        ) : (
-        <>
-        {/* World coverage strip (list view) */}
-        <div className="mt-4">
-          <WorldStrip />
-        </div>
-
-        {/* Stats strip */}
-        {stats && (
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            <div className="rounded-lg border border-border bg-card p-3">
-              <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                {t("tt.institutions")}
-              </p>
-              <p className="mt-1 text-xl font-semibold tabular-nums">
-                {stats.tankCount}
-              </p>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-3">
-              <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                {t("tt.totalPubs")}
-              </p>
-              <p className="mt-1 text-xl font-semibold tabular-nums">
-                {stats.totalPubs.toLocaleString()}
-              </p>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-3">
-              <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                {t("tt.lastDay")}
-              </p>
-              <p className="mt-1 text-xl font-semibold tabular-nums">
-                {stats.pubsLastDay}
-              </p>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-3">
-              <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                {t("tt.lastWeek")}
-              </p>
-              <p className="mt-1 text-xl font-semibold tabular-nums">
-                {stats.pubsLastWeek.toLocaleString()}
-              </p>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-3">
-              <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                {t("tt.topTopics")}
-              </p>
-              <p className="mt-1 text-xl font-semibold tabular-nums">
-                {stats.topicCount}
-              </p>
-            </div>
-            <div className="rounded-lg border border-border bg-card p-3">
-              <p className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                {t("tt.autoRefresh")}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {stats.lastRefresh > 0
-                  ? `${fmtRelative(stats.lastRefresh)} ${t("tt.ago")}`
-                  : t("tt.never")}
-              </p>
-            </div>
+          <div className="tt-rise tt-rise-2 mt-3 flex min-h-0 flex-1 flex-col">
+            <TopicBoard />
           </div>
-        )}
+        ) : (
+          <>
+            {/* ── List view ─────────────────────────────────────────────────── */}
+            <div className="tt-rise tt-rise-2 mt-4 min-h-0 flex-1 overflow-y-auto pb-6">
+              <WorldStrip />
 
-        {/* Search bar */}
-        <div className="relative mt-4">
-          <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t("tt.search")}
-            className="h-10 w-full rounded-md border border-border bg-card pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground/40"
-          />
-        </div>
-
-        {/* Main layout */}
-        <div className="mt-4 grid gap-6 lg:grid-cols-[280px_1fr]">
-          {/* Sidebar */}
-          <aside className="flex flex-col gap-4">
-            {/* Tier filter */}
-            <div>
-              <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                <Star className="size-3" />
-                {t("tt.tier")}
-              </p>
-              <div className="mt-2 flex flex-wrap gap-1">
-                <button
-                  onClick={() => setTierFilter(undefined)}
-                  className={`rounded-md px-2 py-1 text-[10px] transition-colors ${
-                    !tierFilter
-                      ? "bg-foreground text-background"
-                      : "border border-border hover:bg-muted"
-                  }`}
-                >
-                  {t("tt.allTiers")}
-                </button>
-                {["S", "A+", "A", "B+"].map((tier) => (
-                  <button
-                    key={tier}
-                    onClick={() =>
-                      setTierFilter(tierFilter === tier ? undefined : tier)
-                    }
-                    className={`rounded-md px-2 py-1 text-[10px] font-semibold transition-colors ${
-                      tierFilter === tier
-                        ? TIER_COLORS.S
-                        : TIER_COLORS[tier] ?? "border border-border"
-                    }`}
-                  >
-                    {tier}
-                  </button>
-                ))}
+              {/* Search */}
+              <div className="relative mt-4">
+                <Search className="absolute left-3 top-2.5 size-4 text-muted-foreground" />
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={t("tt.search")}
+                  className="h-10 w-full rounded-xl border border-border bg-card pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus:border-foreground/40"
+                />
               </div>
-            </div>
 
-            <Separator />
+              <div className="mt-4 grid gap-5 lg:grid-cols-[280px_1fr]">
+                {/* Sidebar */}
+                <aside className="flex flex-col gap-4">
+                  <div className="tt-glass rounded-xl p-3.5">
+                    <SectionHead kicker="01" title={t("tt.tier")} icon={Star} />
+                    <div className="mt-2.5 flex flex-wrap gap-1">
+                      <button
+                        onClick={() => setTierFilter(undefined)}
+                        className={`rounded-md px-2 py-1 text-[10px] transition-colors ${
+                          !tierFilter
+                            ? "bg-foreground text-background"
+                            : "border border-border hover:bg-muted"
+                        }`}
+                      >
+                        {t("tt.allTiers")}
+                      </button>
+                      {["S", "A+", "A", "B+"].map((tier) => (
+                        <button
+                          key={tier}
+                          onClick={() =>
+                            setTierFilter(tierFilter === tier ? undefined : tier)
+                          }
+                          className={`rounded-md px-2 py-1 text-[10px] font-semibold transition-colors ${
+                            tierFilter === tier
+                              ? TIER_COLORS.S
+                              : TIER_COLORS[tier] ?? "border border-border"
+                          }`}
+                        >
+                          {tier}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-            {/* Cluster filter */}
-            <div>
-              <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                <Layers className="size-3" />
-                {t("tt.clusterFilter")}
-              </p>
-              <div className="mt-2 flex flex-col gap-0.5">
-                <button
-                  onClick={() => setClusterFilter(undefined)}
-                  className={`rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
-                    !clusterFilter
-                      ? "bg-foreground text-background"
-                      : "hover:bg-muted"
-                  }`}
-                >
-                  {t("tt.allRegions")}
-                </button>
-                {CLUSTERS.map((cluster) => (
-                  <button
-                    key={cluster}
-                    onClick={() =>
-                      setClusterFilter(
-                        clusterFilter === cluster ? undefined : cluster,
-                      )
-                    }
-                    className={`rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
-                      clusterFilter === cluster
-                        ? "bg-foreground text-background"
-                        : "hover:bg-muted"
-                    }`}
-                  >
-                    {t(`tt.cluster.${cluster}`)}
-                  </button>
-                ))}
-              </div>
-            </div>
+                  <div className="tt-glass rounded-xl p-3.5">
+                    <SectionHead kicker="02" title={t("tt.clusterFilter")} icon={Layers} />
+                    <div className="mt-2.5 flex flex-col gap-0.5">
+                      <button
+                        onClick={() => setClusterFilter(undefined)}
+                        className={`rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
+                          !clusterFilter
+                            ? "bg-foreground text-background"
+                            : "hover:bg-muted"
+                        }`}
+                      >
+                        {t("tt.allRegions")}
+                      </button>
+                      {CLUSTERS.map((cluster) => (
+                        <button
+                          key={cluster}
+                          onClick={() =>
+                            setClusterFilter(
+                              clusterFilter === cluster ? undefined : cluster,
+                            )
+                          }
+                          className={`rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
+                            clusterFilter === cluster
+                              ? "bg-foreground text-background"
+                              : "hover:bg-muted"
+                          }`}
+                        >
+                          {t(`tt.cluster.${cluster}`)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-            <Separator />
+                  <div className="tt-glass rounded-xl p-3.5">
+                    <SectionHead kicker="03" title={t("tt.regions")} icon={Filter} />
+                    <div className="mt-2.5 flex flex-col gap-0.5">
+                      <button
+                        onClick={() => setRegionFilter(undefined)}
+                        className={`rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
+                          !regionFilter
+                            ? "bg-foreground text-background"
+                            : "hover:bg-muted"
+                        }`}
+                      >
+                        {t("tt.allRegions")}
+                      </button>
+                      {regions.map((region) => (
+                        <button
+                          key={region}
+                          onClick={() =>
+                            setRegionFilter(
+                              regionFilter === region ? undefined : region,
+                            )
+                          }
+                          className={`flex items-center justify-between rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
+                            regionFilter === region
+                              ? "bg-foreground text-background"
+                              : "hover:bg-muted"
+                          }`}
+                        >
+                          <span>{t(REGION_MAP[region] ?? region)}</span>                            <span
+                              className={`size-1.5 rounded-full ${
+                                regionFilter === region
+                                  ? "bg-current opacity-70"
+                                  : regionSolid(region)
+                              }`}
+                            />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
 
-            {/* Region filter */}
-            <div>
-              <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                <Filter className="size-3" />
-                {t("tt.regions")}
-              </p>
-              <div className="mt-2 flex flex-col gap-0.5">
-                <button
-                  onClick={() => setRegionFilter(undefined)}
-                  className={`rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
-                    !regionFilter
-                      ? "bg-foreground text-background"
-                      : "hover:bg-muted"
-                  }`}
-                >
-                  {t("tt.allRegions")}
-                </button>
-                {regions.map((region) => (
-                  <button
-                    key={region}
-                    onClick={() =>
-                      setRegionFilter(
-                        regionFilter === region ? undefined : region,
-                      )
-                    }
-                    className={`flex items-center justify-between rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
-                      regionFilter === region
-                        ? "bg-foreground text-background"
-                        : "hover:bg-muted"
-                    }`}
-                  >
-                    <span>{t(REGION_MAP[region] ?? region)}</span>
-                    <span
-                      className={`size-1.5 rounded-full ${
-                        regionFilter === region
-                          ? "bg-current opacity-70"
-                          : (REGION_COLORS[region] ?? "bg-muted-foreground").split(" ")[0]
-                      }`}
-                    />
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* Tank list */}
-            <div>
-              <p className="flex items-center justify-between text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                <span className="flex items-center gap-1.5">
-                  <Building2 className="size-3" />
-                  {t("tt.institutions")}
-                </span>
-                <span className="tabular-nums">{displayTanks.length}</span>
-              </p>
-              <div className="mt-2 flex max-h-[40vh] flex-col gap-0.5 overflow-y-auto">
-                <button
-                  onClick={() => setSelectedTank(undefined)}
-                  className={`rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
-                    !selectedTank
-                      ? "bg-foreground text-background"
-                      : "hover:bg-muted"
-                  }`}
-                >
-                  {t("tt.allTanks")}
-                </button>
-                {displayTanks.map((tank) => {
-                  const ts = tankStats?.[tank.slug];
-                  return (
-                    <button
-                      key={tank._id}
-                      onClick={() =>
-                        setSelectedTank(
-                          selectedTank === tank.slug ? undefined : tank.slug,
-                        )
-                      }
-                      className={`flex items-center justify-between gap-2 rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
-                        selectedTank === tank.slug
-                          ? "bg-foreground text-background"
-                          : "hover:bg-muted"
-                      }`}
-                    >
-                      <span className="flex min-w-0 items-center gap-1.5">
-                        {tank.tier && (
-                          <span
-                            className={`shrink-0 rounded px-1 py-px text-[8px] font-bold leading-3 ${
+                  <div className="tt-glass rounded-xl p-3.5">
+                    <div className="flex items-center justify-between">
+                      <SectionHead kicker="04" title={t("tt.institutions")} icon={Building2} />
+                      <span className="text-[10px] tabular-nums text-muted-foreground">
+                        {num(displayTanks.length)}
+                      </span>
+                    </div>
+                    <div className="mt-2.5 flex max-h-[38vh] flex-col gap-0.5 overflow-y-auto pe-1">
+                      <button
+                        onClick={() => setSelectedTank(undefined)}
+                        className={`rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
+                          !selectedTank
+                            ? "bg-foreground text-background"
+                            : "hover:bg-muted"
+                        }`}
+                      >
+                        {t("tt.allTanks")}
+                      </button>
+                      {displayTanks.map((tank) => {
+                        const ts = tankStats?.[tank.slug];
+                        return (
+                          <button
+                            key={tank._id}
+                            onClick={() =>
+                              setSelectedTank(
+                                selectedTank === tank.slug ? undefined : tank.slug,
+                              )
+                            }
+                            className={`flex items-center justify-between gap-2 rounded-md px-3 py-1.5 text-right text-xs transition-colors ${
                               selectedTank === tank.slug
-                                ? "bg-background/20"
-                                : TIER_COLORS[tank.tier] ?? ""
+                                ? "bg-foreground text-background"
+                                : "hover:bg-muted"
                             }`}
                           >
-                            {tank.tier}
-                          </span>
-                        )}
-                        <span className="truncate">{tank.name}</span>
+                            <span className="flex min-w-0 items-center gap-1.5">
+                              {tank.tier && (
+                                <span
+                                  className={`shrink-0 rounded px-1 py-px text-[8px] font-bold leading-3 ${
+                                    selectedTank === tank.slug
+                                      ? "bg-background/20"
+                                      : TIER_COLORS[tank.tier] ?? ""
+                                  }`}
+                                >
+                                  {tank.tier}
+                                </span>
+                              )}
+                              <span className="truncate">{tank.name}</span>
+                            </span>
+                            {ts && ts.count > 0 && (
+                              <span className="shrink-0 text-[10px] tabular-nums opacity-60">
+                                {num(ts.count)}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {topTopics && topTopics.length > 0 && (
+                    <div className="tt-glass rounded-xl p-3.5">
+                      <SectionHead kicker="05" title={t("tt.topTopics")} icon={TrendingUp} />
+                      <div className="mt-2.5 flex flex-wrap gap-1">
+                        {topTopics.map((item) => (
+                          <button
+                            key={item.topic}
+                            onClick={() => setSearch(item.topic)}
+                            className="rounded-full border border-border px-2 py-0.5 text-[10px] transition-colors hover:border-foreground/40 hover:bg-muted"
+                          >
+                            {item.topic} <span className="opacity-50">({num(item.count)})</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </aside>
+
+                {/* Feed */}
+                <div className="flex flex-col gap-3">
+                  {/* Active filters */}
+                  {(selectedTank || search || tierFilter || clusterFilter || regionFilter) && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <Signal className="size-3" />
+                        {pubs ? num(pubs.length) : "…"} {t("tt.pubs")}
                       </span>
-                      {ts && ts.count > 0 && (
-                        <span className="shrink-0 text-[10px] tabular-nums opacity-60">
-                          {ts.count}
-                        </span>
+                      {selectedTank && (
+                        <Badge variant="secondary" className="gap-1 text-[10px]">
+                          {tankStats?.[selectedTank]?.name ?? selectedTank}
+                          <button
+                            onClick={() => setSelectedTank(undefined)}
+                            className="ms-0.5 hover:text-foreground"
+                          >
+                            ×
+                          </button>
+                        </Badge>
                       )}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <Separator />
-
-            {/* Top topics */}
-            {topTopics && topTopics.length > 0 && (
-              <div>
-                <p className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                  <TrendingUp className="size-3" />
-                  {t("tt.topTopics")}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {topTopics.map((item) => (
-                    <button
-                      key={item.topic}
-                      onClick={() => setSearch(item.topic)}
-                      className="rounded-full border border-border px-2 py-0.5 text-[10px] transition-colors hover:bg-muted"
-                    >
-                      {item.topic}{" "}
-                      <span className="opacity-50">({item.count})</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </aside>
-
-          {/* Publications feed */}
-          <div className="flex flex-col gap-3">
-            {/* Active filters */}
-            {(selectedTank || search || tierFilter || clusterFilter || regionFilter) && (
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span>
-                  {pubs ? pubs.length : "…"} {t("tt.pubs")}
-                </span>
-                {selectedTank && (
-                  <Badge variant="secondary" className="gap-1 text-[10px]">
-                    {tankStats?.[selectedTank]?.name ?? selectedTank}
-                    <button
-                      onClick={() => setSelectedTank(undefined)}
-                      className="ms-0.5 hover:text-foreground"
-                    >
-                      ×
-                    </button>
-                  </Badge>
-                )}
-                {tierFilter && (
-                  <Badge variant="secondary" className="gap-1 text-[10px]">
-                    {tierFilter}
-                    <button
-                      onClick={() => setTierFilter(undefined)}
-                      className="ms-0.5 hover:text-foreground"
-                    >
-                      ×
-                    </button>
-                  </Badge>
-                )}
-                {clusterFilter && (
-                  <Badge variant="secondary" className="gap-1 text-[10px]">
-                    {t(`tt.cluster.${clusterFilter}`)}
-                    <button
-                      onClick={() => setClusterFilter(undefined)}
-                      className="ms-0.5 hover:text-foreground"
-                    >
-                      ×
-                    </button>
-                  </Badge>
-                )}
-                {regionFilter && (
-                  <Badge variant="secondary" className="gap-1 text-[10px]">
-                    {t(REGION_MAP[regionFilter] ?? regionFilter)}
-                    <button
-                      onClick={() => setRegionFilter(undefined)}
-                      className="ms-0.5 hover:text-foreground"
-                    >
-                      ×
-                    </button>
-                  </Badge>
-                )}
-                {search && (
-                  <Badge variant="secondary" className="gap-1 text-[10px]">
-                    "{search}"
-                    <button
-                      onClick={() => setSearch("")}
-                      className="ms-0.5 hover:text-foreground"
-                    >
-                      ×
-                    </button>
-                  </Badge>
-                )}
-              </div>
-            )}
-
-            {/* Loading */}
-            {!pubs && (
-              <div className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-4 py-8 text-sm text-muted-foreground">
-                <RefreshCw className="size-4 animate-spin" />
-                {t("tt.loading")}
-              </div>
-            )}
-
-            {/* Empty state */}
-            {pubs && pubs.length === 0 && (
-              <div className="rounded-md border border-dashed border-border px-4 py-12 text-center">
-                <BookOpen className="mx-auto size-8 text-muted-foreground/30" />
-                <p className="mt-3 text-sm text-muted-foreground">
-                  {search ? t("tt.noResults") : t("tt.noPubs")}
-                </p>
-                {!search && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-3 gap-1.5 text-xs"
-                    onClick={handleRefresh}
-                    disabled={refreshing}
-                  >
-                    <RefreshCw className="size-3.5" />
-                    {t("tt.refreshAll")}
-                  </Button>
-                )}
-              </div>
-            )}
-
-            {/* Publications list */}
-            {pubs?.map((pub, batchSeq) => {
-              const tankInfo = tankStats?.[pub.thinkTankSlug];
-              return (
-                <a
-                  key={pub._id}
-                  href={pub.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="group block rounded-lg border border-border/70 bg-card p-4 transition-all hover:border-foreground/30 hover:shadow-sm"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <h3 className="text-sm font-medium leading-5 group-hover:underline">
-                        {pub.title}
-                      </h3>
-                      {pub.summary && (
-                        <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                          {pub.summary}
-                        </p>
+                      {tierFilter && (
+                        <Badge variant="secondary" className="gap-1 text-[10px]">
+                          {tierFilter}
+                          <button
+                            onClick={() => setTierFilter(undefined)}
+                            className="ms-0.5 hover:text-foreground"
+                          >
+                            ×
+                          </button>
+                        </Badge>
                       )}
-                      {lang === "fa" && (
-                        <TranslationBlock
-                          title={pub.title}
-                          summary={pub.summary}
-                          batchKey={batchKey}
-                          batchSeq={batchSeq}
-                          batchSize={batchTotal}
-                          onBatchDone={() => setBatchDone((d) => d + 1)}
-                        />
+                      {clusterFilter && (
+                        <Badge variant="secondary" className="gap-1 text-[10px]">
+                          {t(`tt.cluster.${clusterFilter}`)}
+                          <button
+                            onClick={() => setClusterFilter(undefined)}
+                            className="ms-0.5 hover:text-foreground"
+                          >
+                            ×
+                          </button>
+                        </Badge>
+                      )}
+                      {regionFilter && (
+                        <Badge variant="secondary" className="gap-1 text-[10px]">
+                          {t(REGION_MAP[regionFilter] ?? regionFilter)}
+                          <button
+                            onClick={() => setRegionFilter(undefined)}
+                            className="ms-0.5 hover:text-foreground"
+                          >
+                            ×
+                          </button>
+                        </Badge>
+                      )}
+                      {search && (
+                        <Badge variant="secondary" className="gap-1 text-[10px]">
+                          "{search}"
+                          <button
+                            onClick={() => setSearch("")}
+                            className="ms-0.5 hover:text-foreground"
+                          >
+                            ×
+                          </button>
+                        </Badge>
                       )}
                     </div>
-                    <ExternalLink className="mt-0.5 size-4 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-foreground" />
-                  </div>
+                  )}
 
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    {/* Tank badge with tier */}
-                    <span
-                      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                        REGION_COLORS[tankInfo?.region ?? ""] ??
-                        "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      <Globe className="size-2.5" />
-                      {tankInfo?.name ?? pub.thinkTankSlug}
-                      {tankInfo?.tier && (
-                        <span className="rounded bg-foreground/10 px-1 text-[8px] font-bold">
-                          {tankInfo.tier}
-                        </span>
+                  {/* Loading */}
+                  {!pubs && (
+                    <div className="space-y-2.5">
+                      {[0, 1, 2, 3].map((i) => (
+                        <div key={i} className="tt-shimmer h-24 rounded-xl" />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Empty state */}
+                  {pubs && pubs.length === 0 && (
+                    <div className="rounded-xl border border-dashed border-border px-4 py-14 text-center">
+                      <BookOpen className="mx-auto size-9 text-muted-foreground/30" />
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        {search ? t("tt.noResults") : t("tt.noPubs")}
+                      </p>
+                      {!search && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="mt-3 gap-1.5 text-xs"
+                          onClick={handleRefresh}
+                          disabled={refreshing}
+                        >
+                          <RefreshCw className="size-3.5" />
+                          {t("tt.refreshAll")}
+                        </Button>
                       )}
-                    </span>
+                    </div>
+                  )}
 
-                    {/* Website link */}
-                    {tankInfo?.website && (
-                      <span className="hidden items-center gap-1 text-[10px] text-muted-foreground/70 sm:flex">
-                        <ExternalLink className="size-2.5" />
-                        {new URL(tankInfo.website).hostname.replace("www.", "")}
-                      </span>
-                    )}
+                  {/* Publications */}
+                  {pubs?.map((pub, batchSeq) => {
+                    const tankInfo = tankStats?.[pub.thinkTankSlug];
+                    return (
+                      <a
+                        key={pub._id}
+                        href={pub.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="tt-rise group relative block overflow-hidden rounded-xl border border-border/70 bg-card p-4 transition-all duration-300 hover:-translate-y-0.5 hover:border-foreground/30 hover:shadow-lg hover:shadow-foreground/5"
+                      >
+                        {/* Accent rail */}
+                        <span
+                          className={`absolute inset-y-0 start-0 w-[3px] transition-all ${
+                            regionSolid(tankInfo?.region)
+                          }`}
+                        />
+                        <div className="flex items-start justify-between gap-3 ps-2">
+                          <div className="min-w-0 flex-1">
+                            <h3 className="text-sm font-semibold leading-5 tracking-tight transition-colors group-hover:underline group-hover:underline-offset-4">
+                              {pub.title}
+                            </h3>
+                            {pub.summary && (
+                              <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                                {pub.summary}
+                              </p>
+                            )}
+                            {lang === "fa" && (
+                              <TranslationBlock
+                                title={pub.title}
+                                summary={pub.summary}
+                                batchKey={batchKey}
+                                batchSeq={batchSeq}
+                                batchSize={batchTotal}
+                                onBatchDone={() => setBatchDone((d) => d + 1)}
+                              />
+                            )}
+                          </div>
+                          <ExternalLink className="mt-0.5 size-4 shrink-0 text-muted-foreground/40 transition-all group-hover:-translate-y-0.5 group-hover:-translate-x-0.5 group-hover:text-foreground" />
+                        </div>
 
-                    {/* Date */}
-                    <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                      <Calendar className="size-2.5" />
-                      {fmtDate(pub.publishedAt, lang === "fa")}
-                    </span>
-
-                    {/* Topics */}
-                    {pub.topics.length > 0 && (
-                      <span className="flex flex-wrap gap-1">
-                        {pub.topics.slice(0, 3).map((topic) => (
+                        <div className="mt-3 flex flex-wrap items-center gap-2 ps-2">
                           <span
-                            key={topic}
-                            className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] text-muted-foreground"
+                            className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                              REGION_COLORS[tankInfo?.region ?? ""] ??
+                              "bg-muted text-muted-foreground"
+                            }`}
                           >
-                            {topic}
+                            <Globe className="size-2.5" />
+                            {tankInfo?.name ?? pub.thinkTankSlug}
+                            {tankInfo?.tier && (
+                              <span className="rounded bg-foreground/10 px-1 text-[8px] font-bold">
+                                {tankInfo.tier}
+                              </span>
+                            )}
                           </span>
-                        ))}
-                        {pub.topics.length > 3 && (
-                          <span className="text-[9px] text-muted-foreground/60">
-                            +{pub.topics.length - 3}
+
+                          {tankInfo?.website && (
+                            <span className="hidden items-center gap-1 text-[10px] text-muted-foreground/70 sm:flex">
+                              <ExternalLink className="size-2.5" />
+                              {new URL(tankInfo.website).hostname.replace("www.", "")}
+                            </span>
+                          )}
+
+                          <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                            <Calendar className="size-2.5" />
+                            {fmtDate(pub.publishedAt, lang === "fa")}
                           </span>
-                        )}
-                      </span>
-                    )}
-                  </div>
-                </a>
-              );
-            })}
-          </div>
-        </div>
-        </>
+
+                          {pub.topics.length > 0 && (
+                            <span className="flex flex-wrap gap-1">
+                              {pub.topics.slice(0, 3).map((topic) => (
+                                <span
+                                  key={topic}
+                                  className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] text-muted-foreground transition-colors hover:text-foreground"
+                                >
+                                  {topic}
+                                </span>
+                              ))}
+                              {pub.topics.length > 3 && (
+                                <span className="text-[9px] text-muted-foreground/60">
+                                  +{num(pub.topics.length - 3)}
+                                </span>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          </>
         )}
       </main>
 

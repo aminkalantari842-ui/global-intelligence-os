@@ -36,15 +36,16 @@ import { aiErrorKey } from "@/lib/aiError";
 import { TopicSparkline, WorldStrip } from "./BoardVisuals";
 import EnhancedReader, { type EnhancedReaderTab } from "./EnhancedReader";
 
-/** Column taxonomy — mirrors TOPICS in convex/articles.ts. */
-const TOPIC_COLUMNS: Array<{ id: string; labelKey: string; accent: string }> = [
-  { id: "military", labelKey: "board.military", accent: "border-t-rose-500" },
-  { id: "security", labelKey: "board.security", accent: "border-t-amber-500" },
-  { id: "geopolitics", labelKey: "board.geopolitics", accent: "border-t-sky-500" },
-  { id: "economy", labelKey: "board.economy", accent: "border-t-emerald-500" },
-  { id: "energy", labelKey: "board.energy", accent: "border-t-orange-500" },
-  { id: "tech", labelKey: "board.tech", accent: "border-t-violet-500" },
-  { id: "governance", labelKey: "board.governance", accent: "border-t-teal-500" },
+/** Column taxonomy — mirrors TOPICS in convex/articles.ts. rgb triplets
+ * drive the hover glow / accent bar via the .topic-col CSS layer. */
+const TOPIC_COLUMNS: Array<{ id: string; labelKey: string; accent: string; rgb: string }> = [
+  { id: "military", labelKey: "board.military", accent: "border-t-rose-500", rgb: "244 63 94" },
+  { id: "security", labelKey: "board.security", accent: "border-t-amber-500", rgb: "245 158 11" },
+  { id: "geopolitics", labelKey: "board.geopolitics", accent: "border-t-sky-500", rgb: "14 165 233" },
+  { id: "economy", labelKey: "board.economy", accent: "border-t-emerald-500", rgb: "16 185 129" },
+  { id: "energy", labelKey: "board.energy", accent: "border-t-orange-500", rgb: "249 115 22" },
+  { id: "tech", labelKey: "board.tech", accent: "border-t-violet-500", rgb: "139 92 246" },
+  { id: "governance", labelKey: "board.governance", accent: "border-t-teal-500", rgb: "20 184 166" },
 ];
 const ALL_IDS = TOPIC_COLUMNS.map((c) => c.id);
 const PAGE = 30; // per-fetch page size (incremental "infinite" scroll)
@@ -86,6 +87,7 @@ function TopicColumn({
   topicId,
   labelKey,
   accent,
+  rgb,
   count,
   width,
   pinned,
@@ -107,6 +109,7 @@ function TopicColumn({
   topicId: string;
   labelKey: string;
   accent: string;
+  rgb: string;
   count?: number;
   width: number;
   pinned: boolean;
@@ -167,21 +170,23 @@ function TopicColumn({
       }}
       onFocus={onFocus as never}
       tabIndex={-1}
-      className={`relative flex h-full min-w-0 shrink-0 flex-col overflow-hidden rounded-lg border bg-card transition-shadow ${accent} border-t-2 ${
-        dragOver ? "border-dashed border-sky-500" : "border-border"
-      } ${focused ? "ring-1 ring-ring/60" : ""}`}
-      style={{ width }}
+      data-focused={focused}
+      style={{ width, "--col-accent": rgb } as React.CSSProperties}
+      className={`topic-col relative flex h-full min-w-0 shrink-0 flex-col overflow-hidden rounded-xl border bg-card ${accent} border-t-2 ${
+        dragOver ? "border-dashed border-sky-500" : "border-border/80"
+      }`}
     >
       {/* Header: title, sparkline, count, pin */}
       <header
         draggable
         onDragStart={onDragStart}
         onDoubleClick={onPin}
-        className="flex shrink-0 cursor-grab items-center justify-between gap-2 border-b border-border/70 px-3 py-2 active:cursor-grabbing"
+        className="flex shrink-0 cursor-grab items-center justify-between gap-2 border-b border-border/70 px-3 py-2.5 active:cursor-grabbing"
       >
-        <div className="flex min-w-0 items-center gap-1.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="size-2 shrink-0 rounded-full" style={{ background: `rgb(${rgb})`, boxShadow: `0 0 8px rgb(${rgb} / 0.55)` }} />
           {pinned && <Pin className="size-3 shrink-0 text-sky-600" />}
-          <h2 className="truncate text-xs font-bold tracking-tight">{t(labelKey)}</h2>
+          <h2 className="truncate text-[11.5px] font-bold tracking-tight">{t(labelKey)}</h2>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <TopicSparkline topicId={topicId} accentClass={compact ? "fill-foreground/40" : "fill-foreground/55"} />
@@ -207,7 +212,7 @@ function TopicColumn({
         {items === undefined && (
           <div className="space-y-2 p-2.5">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-16 animate-pulse rounded-md bg-muted/50" />
+              <div key={i} className="tt-shimmer h-16 rounded-md" />
             ))}
           </div>
         )}
@@ -222,7 +227,7 @@ function TopicColumn({
           return (
             <div
               key={item._id}
-              className={`group relative border-b border-border/50 transition-colors last:border-b-0 hover:bg-muted/50 ${
+              className={`topic-item group relative border-b border-border/40 last:border-b-0 ${
                 saved ? "bg-sky-500/5" : ""
               }`}
             >
@@ -744,10 +749,10 @@ export default function TopicBoard() {
   }, [lang]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2" dir={boardDir}>
+    <div className="flex min-h-0 flex-1 flex-col gap-2.5" dir={boardDir}>
       {/* Live ticker — just-published strip (paused on hover) */}
       {ticker && ticker.length > 0 && (
-        <div className="flex h-7 shrink-0 items-center overflow-hidden rounded-md border border-border bg-card">
+        <div className="tt-rise flex h-7 shrink-0 items-center overflow-hidden rounded-lg border border-border bg-card">
           <span className="flex h-full shrink-0 items-center gap-1 bg-rose-600 px-2 text-[9px] font-bold uppercase tracking-widest text-white">
             <History className="size-3 animate-pulse" /> {t("board.ticker.live")}
           </span>
@@ -780,7 +785,7 @@ export default function TopicBoard() {
         </div>
       )}
       {/* Toolbar row: view density, lists, resume */}
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+      <div className="tt-glass tt-rise-1 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl px-2 py-1.5">
         <div className="flex items-center gap-1.5">
           {/* Density switcher */}
           <div className="flex rounded-md border border-border p-0.5">
@@ -966,6 +971,7 @@ export default function TopicBoard() {
               topicId={id}
               labelKey={col.labelKey}
               accent={col.accent}
+              rgb={col.rgb}
               count={counts?.[id]}
               width={colWidth(id)}
               pinned={pinned.has(id)}
@@ -1009,8 +1015,8 @@ export default function TopicBoard() {
 
         {/* Reader tabs — docked right side */}
         {tabs.length > 0 && (
-          <div className="relative flex w-[42%] min-w-96 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-card">
-            <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-1.5">
+          <div className="tt-rise relative flex w-[42%] min-w-96 shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
+            <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-muted/40 px-1.5">
               {tabs.map((tb) => (
                 <button
                   key={tb.key}

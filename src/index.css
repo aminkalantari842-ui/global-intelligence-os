@@ -132,6 +132,151 @@
   animation-play-state: paused;
 }
 
+/* ── Think-tank intelligence desk — motion & atmosphere layer ───────────── */
+
+/* Ambient operator-room backdrop: deep slate wash + faint scanline grid.
+   Pure CSS, sits behind the whole ThinkTanks page. */
+.tt-atmosphere {
+  position: relative;
+}
+.tt-atmosphere::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(1100px 480px at 12% -8%,
+      color-mix(in oklab, var(--color-chart-3) 12%, transparent), transparent 65%),
+    radial-gradient(900px 420px at 88% -12%,
+      color-mix(in oklab, var(--color-chart-2) 10%, transparent), transparent 65%),
+    radial-gradient(700px 500px at 50% 118%,
+      color-mix(in oklab, var(--color-chart-1) 7%, transparent), transparent 70%);
+  opacity: 0.55;
+}
+.tt-atmosphere::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, color-mix(in oklab, var(--color-border) 55%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in oklab, var(--color-border) 55%, transparent) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(1200px 620px at 50% 0%, black 0%, transparent 78%);
+  opacity: 0.35;
+}
+.tt-atmosphere > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Frosted command-panel used for the masthead, stat rail and toolbar groups. */
+.tt-glass {
+  background: color-mix(in oklab, var(--color-card) 72%, transparent);
+  backdrop-filter: blur(14px) saturate(1.35);
+  border: 1px solid color-mix(in oklab, var(--color-border) 80%, transparent);
+  box-shadow:
+    0 1px 0 0 color-mix(in oklab, var(--color-background) 65%, transparent) inset,
+    0 12px 32px -18px color-mix(in oklab, var(--color-foreground) 28%, transparent);
+}
+
+/* Kicker eyebrow text above section titles. */
+.tt-kicker {
+  font-size: 9.5px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--color-muted-foreground);
+}
+
+/* Live pulse dot for the masthead status lamp. */
+@keyframes tt-lamp {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--color-chart-2) 55%, transparent); }
+  55% { box-shadow: 0 0 0 6px transparent; }
+}
+.tt-lamp {
+  animation: tt-lamp 2.4s ease-out infinite;
+}
+
+/* Fade-up entrance for board sections and cards. */
+@keyframes tt-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.tt-rise {
+  animation: tt-rise 0.45s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.tt-rise-1 { animation-delay: 0.05s; }
+.tt-rise-2 { animation-delay: 0.1s; }
+.tt-rise-3 { animation-delay: 0.16s; }
+
+/* Shimmer for loading skeletons (replaces flat pulse). */
+@keyframes tt-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+.tt-shimmer {
+  background: linear-gradient(
+    100deg,
+    color-mix(in oklab, var(--color-muted) 88%, transparent) 40%,
+    color-mix(in oklab, var(--color-foreground) 7%, var(--color-muted)) 50%,
+    color-mix(in oklab, var(--color-muted) 88%, transparent) 60%
+  );
+  background-size: 200% 100%;
+  animation: tt-shimmer 1.6s linear infinite;
+}
+
+/* Topic column hover: lift + accent glow. Accent hue is set per column via
+   --col-accent (rgb triplet) from the board config. */
+.topic-col {
+  transition: transform 0.28s cubic-bezier(0.22, 0.61, 0.36, 1),
+    box-shadow 0.28s ease, border-color 0.2s ease;
+}
+.topic-col:hover {
+  transform: translateY(-3px);
+  box-shadow:
+    0 18px 38px -22px color-mix(in oklab, var(--color-foreground) 38%, transparent),
+    0 0 0 1px color-mix(in oklab, rgb(var(--col-accent, 56 189 248)) 35%, transparent);
+}
+.topic-col[data-focused="true"] {
+  border-color: color-mix(in oklab, rgb(var(--col-accent, 56 189 248)) 55%, var(--color-border));
+  box-shadow:
+    0 0 0 1px color-mix(in oklab, rgb(var(--col-accent, 56 189 248)) 45%, transparent),
+    0 14px 30px -20px color-mix(in oklab, rgb(var(--col-accent, 56 189 248)) 45%, transparent);
+}
+
+/* Card item micro-interactions inside a column. */
+.topic-item {
+  transition: background-color 0.15s ease, padding-inline-start 0.18s ease;
+}
+.topic-item:hover {
+  background: color-mix(in oklab, var(--color-muted) 65%, transparent);
+}
+.topic-item::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgb(var(--col-accent, 56 189 248));
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.topic-item:hover::before {
+  opacity: 0.85;
+}
+
+/* Stat rail numbers get a subtle tabular glow on hover. */
+.tt-stat:hover .tt-stat-num {
+  color: var(--color-foreground);
+}
+.tt-stat {
+  transition: transform 0.2s ease, background-color 0.2s ease;
+}
+.tt-stat:hover {
+  transform: translateY(-2px);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
