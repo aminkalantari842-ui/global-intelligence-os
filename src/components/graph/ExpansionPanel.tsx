@@ -11,6 +11,7 @@ import { useI18n } from "@/i18n/context";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { fmtNum } from "./metrics";
+import { aiErrorKey } from "@/lib/aiError";
 import type { GraphActor, GraphRelation } from "./types";
 import {
   Check,
@@ -133,12 +134,13 @@ export function ExpansionPanel({
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      const key = aiErrorKey(msg);
       setPhase({
         status: "error",
         message: msg.includes("NO_SEARCH_RESULTS")
           ? t("exp.noResults")
-          : msg.includes("AI_API_KEY")
-            ? t("ai.noKey")
+          : key
+            ? t(key)
             : t("ai.error"),
       });
     }

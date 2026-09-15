@@ -8,15 +8,13 @@
 import { action } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
-import { MODEL_NAME } from "./aiCorpus";
+import { AI_CHAT_URL, AI_MODEL, aiApiKey } from "./aiConfig";
 
-const API_URL = "https://api.tokenrouter.com/v1/chat/completions";
-const MODEL = MODEL_NAME;
+const MODEL = AI_MODEL;
 
 async function runAI(system: string, user: string, maxTokens = 1200): Promise<string> {
-  const apiKey = process.env.AI_API_KEY;
-  if (!apiKey) throw new Error("AI_API_KEY_NOT_CONFIGURED");
-  const res = await fetch(API_URL, {
+  const apiKey = aiApiKey();
+  const res = await fetch(AI_CHAT_URL, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -187,10 +185,13 @@ export const disagreementRadar = action({
 export const trendNarrative = action({
   args: {},
   handler: async (ctx) => {
-    const pubs = (await ctx.runQuery(ref.recentPubs, { limit: 12 })) as Array<
-      PubT & { text: string }
+    // Use the retrieval corpus (full translated text, falling back to the RSS
+    // summary) so the weekly brief works as soon as a handful of publications
+    // exist — before every article's full text has been extracted.
+    const pubs = (await ctx.runQuery(ref.retrievalCorpus, { limit: 12 })) as Array<
+      PubT & { text: string; ts: number }
     >;
-    const usable = pubs.filter((p) => p.text.length > 200);
+    const usable = pubs.filter((p) => (p.text ?? "").trim().length > 0);
     if (usable.length < 3) throw new Error("NEED_MORE_CORPUS");
     const labeled = usable
       .map((p, i) => `[A${i + 1}] ${p.tank}: "${p.title}"\n${p.text.slice(0, 2500)}`)

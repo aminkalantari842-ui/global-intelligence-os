@@ -5,8 +5,9 @@
 
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { AI_MODEL } from "./aiConfig";
 
-const MODEL = "z-ai/glm-5.3-free";
+const MODEL = AI_MODEL;
 
 // ─── Reads ──────────────────────────────────────────────────────────────────
 

@@ -3,6 +3,7 @@ import { api } from "@/convex/_generated/api";
 import { useI18n } from "@/i18n/context";
 import { useState } from "react";
 import { Link } from "react-router";
+import { aiErrorKey } from "@/lib/aiError";
 import { Button } from "@/components/ui/button";
 import { Send, Bot, User, Loader2, AlertCircle } from "lucide-react";
 
@@ -41,11 +42,8 @@ export default function Analyst() {
       setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("AI_API_KEY_NOT_CONFIGURED")) {
-        setError(t("ai.noKey"));
-      } else {
-        setError(msg);
-      }
+      const key = aiErrorKey(msg);
+      setError(key ? t(key) : msg);
     } finally {
       setLoading(false);
     }

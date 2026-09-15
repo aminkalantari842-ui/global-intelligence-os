@@ -1,8 +1,6 @@
 import { action } from "./_generated/server";
 import { v } from "convex/values";
-
-const API_URL = "https://api.tokenrouter.com/v1/chat/completions";
-const MODEL = "z-ai/glm-5.3-free";
+import { AI_CHAT_URL, AI_MODEL, aiApiKey } from "./aiConfig";
 
 export const chat = action({
   args: {
@@ -15,8 +13,7 @@ export const chat = action({
     graphContext: v.optional(v.string()),
   },
   handler: async (_ctx, { messages, graphContext }) => {
-    const apiKey = process.env.AI_API_KEY;
-    if (!apiKey) throw new Error("AI_API_KEY_NOT_CONFIGURED");
+    const apiKey = aiApiKey();
 
     const systemMessage = {
       role: "system" as const,
@@ -31,13 +28,13 @@ export const chat = action({
 
     const fullMessages = [systemMessage, ...messages];
 
-    const res = await fetch(API_URL, {
+    const res = await fetch(AI_CHAT_URL, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ model: MODEL, messages: fullMessages }),
+      body: JSON.stringify({ model: AI_MODEL, messages: fullMessages }),
       signal: AbortSignal.timeout(60_000),
     });
 

@@ -3,6 +3,7 @@ import { api } from "@/convex/_generated/api";
 import { useI18n } from "@/i18n/context";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
+import { aiErrorKey } from "@/lib/aiError";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -133,9 +134,10 @@ function TranslationBlock({
       setState({ status: "done", ...res });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      const key = aiErrorKey(msg);
       setState({
         status: "error",
-        message: msg.includes("AI_API_KEY") ? t("ai.noKey") : t("tt.translateError"),
+        message: key ? t(key) : t("tt.translateError"),
       });
     } finally {
       if (batchSize > 0) onBatchDone();

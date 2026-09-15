@@ -13,6 +13,7 @@ import { useI18n } from "@/i18n/context";
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { actorDisplayName, fmtAgo, fmtNum, toFaDigits } from "./metrics";
+import { aiErrorKey } from "@/lib/aiError";
 import { detectBlocks } from "./network";
 import type { GraphActor, GraphRelation } from "./types";
 import {
@@ -249,7 +250,9 @@ export default function WargameStudio({
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setAi((p) => ({ ...p, busy: null, critique: msg.includes("AI_API_KEY") ? t("ai.noKey") : p.critique, brief: msg.includes("AI_API_KEY") ? t("ai.noKey") : p.brief }));
+      const key = aiErrorKey(msg);
+      const notice = key ? t(key) : msg.slice(0, 140);
+      setAi((p) => ({ ...p, busy: null, critique: notice, brief: notice }));
     }
   };
 

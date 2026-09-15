@@ -32,6 +32,7 @@ import {
   X,
 } from "lucide-react";
 import { toFaDigits } from "@/components/graph/metrics";
+import { aiErrorKey } from "@/lib/aiError";
 import { TopicSparkline, WorldStrip } from "./BoardVisuals";
 import EnhancedReader, { type EnhancedReaderTab } from "./EnhancedReader";
 
@@ -630,13 +631,14 @@ export default function TopicBoard() {
         })
         .catch((e) => {
           const msg = e instanceof Error ? e.message : String(e);
+          const key2 = aiErrorKey(msg);
           setTabs((cur) =>
             cur.map((tb) =>
               tb.key === key
                 ? {
                     ...tb,
                     loading: false,
-                    error: msg.includes("AI_API_KEY") ? t("ai.noKey") : t("board.readerError"),
+                    error: key2 ? t(key2) : t("board.readerError"),
                   }
                 : tb,
             ),

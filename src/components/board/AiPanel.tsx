@@ -8,6 +8,7 @@ import { api } from "@/convex/_generated/api";
 import { useI18n } from "@/i18n/context";
 import { useState } from "react";
 import { Brain, FileSearch, FileText, Gavel, Languages, Loader2, ScrollText } from "lucide-react";
+import { aiErrorKey } from "@/lib/aiError";
 
 type Kind = "BRIEF" | "THESIS" | "RED_TEAM" | "SUMMARY";
 
@@ -42,7 +43,8 @@ export function AiPanel({ pubId }: { pubId: string }) {
       setText(r.text);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "error";
-      setErr(msg.includes("AI_API_KEY") ? t("ai.noKey") : msg.slice(0, 100));
+      const key = aiErrorKey(msg);
+      setErr(key ? t(key) : msg.slice(0, 100));
     } finally {
       setBusy(null);
     }

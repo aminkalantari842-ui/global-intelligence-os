@@ -8,6 +8,7 @@ import { api } from "@/convex/_generated/api";
 import { useI18n } from "@/i18n/context";
 import { useState } from "react";
 import { Loader2, Sparkles, X } from "lucide-react";
+import { aiErrorKey } from "@/lib/aiError";
 
 type Tab = "velocity" | "anomalies" | "movers" | "dups" | "heat" | "calibration" | "alerts" | "copilot";
 
@@ -47,8 +48,10 @@ export function Signals() {
     try {
       const r = await trendRun({});
       setTrendText(r.text);
-    } catch {
-      setTrendText(t("ai.noKey"));
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "error";
+      const key = aiErrorKey(msg);
+      setTrendText(key ? t(key) : msg.slice(0, 160));
     } finally {
       setTrendBusy(false);
     }
@@ -254,7 +257,8 @@ function Copilot() {
       setText(r.text);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "error";
-      setErr(msg.includes("AI_API_KEY") ? t("ai.noKey") : msg.slice(0, 110));
+      const key = aiErrorKey(msg);
+      setErr(key ? t(key) : msg.slice(0, 110));
     } finally {
       setBusy(null);
     }

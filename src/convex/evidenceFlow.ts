@@ -16,9 +16,10 @@
 
 import { action, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { AI_CHAT_URL, AI_MODEL, aiApiKey } from "./aiConfig";
 
-const API_URL = "https://api.tokenrouter.com/v1/chat/completions";
-const MODEL = "z-ai/glm-5.3-free";
+const API_URL = AI_CHAT_URL;
+const MODEL = AI_MODEL;
 
 const EVENT_TYPES = [
   "STATEMENT",
@@ -91,8 +92,7 @@ export const proposeClaimCandidates = action({
     ),
   },
   handler: async (_ctx, { title, summary, articleText, actors }) => {
-    const apiKey = process.env.AI_API_KEY;
-    if (!apiKey) throw new Error("AI_API_KEY_NOT_CONFIGURED");
+    const apiKey = aiApiKey();
 
     const roster = actors
       .slice(0, 120)

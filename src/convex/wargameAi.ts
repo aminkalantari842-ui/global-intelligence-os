@@ -6,9 +6,10 @@
 
 import { action, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { AI_CHAT_URL, AI_MODEL, aiApiKey } from "./aiConfig";
 
-const API_URL = "https://api.tokenrouter.com/v1/chat/completions";
-const MODEL = "z-ai/glm-5.3-free";
+const API_URL = AI_CHAT_URL;
+const MODEL = AI_MODEL;
 
 async function callModel(apiKey: string, system: string, user: string, maxTokens = 900): Promise<string> {
   const res = await fetch(API_URL, {
@@ -182,8 +183,7 @@ export const aiCritique = action({
     evidenceJson: v.string(),
   },
   handler: async (_ctx, { aName, bName, outcome, transcriptJson, evidenceJson }): Promise<{ critique: string }> => {
-    const apiKey = process.env.AI_API_KEY;
-    if (!apiKey) throw new Error("AI_API_KEY_NOT_CONFIGURED");
+    const apiKey = aiApiKey();
     const system = AI_SYSTEM_BASE;
     const user = [
       "REAL EVIDENCE (stored, observed):",
@@ -212,8 +212,7 @@ export const aiNarrate = action({
     evidenceJson: v.string(),
   },
   handler: async (_ctx, { aName, bName, transcriptJson, evidenceJson }): Promise<{ narrative: string }> => {
-    const apiKey = process.env.AI_API_KEY;
-    if (!apiKey) throw new Error("AI_API_KEY_NOT_CONFIGURED");
+    const apiKey = aiApiKey();
     const user = [
       "REAL EVIDENCE (stored, observed):",
       evidenceJson.slice(0, 5000),
@@ -240,8 +239,7 @@ export const aiBrief = action({
     evidenceJson: v.string(),
   },
   handler: async (_ctx, { aName, bName, outcome, basisGrade, configJson, transcriptJson, evidenceJson }): Promise<{ brief: string }> => {
-    const apiKey = process.env.AI_API_KEY;
-    if (!apiKey) throw new Error("AI_API_KEY_NOT_CONFIGURED");
+    const apiKey = aiApiKey();
     const user = [
       "REAL EVIDENCE (stored, observed):",
       evidenceJson.slice(0, 5000),

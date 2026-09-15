@@ -15,9 +15,10 @@
 import { internalAction, internalMutation, internalQuery, action } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
+import { AI_CHAT_URL, AI_MODEL, aiApiKey } from "./aiConfig";
 
-const AI_URL = "https://api.tokenrouter.com/v1/chat/completions";
-const MODEL = "z-ai/glm-5.3-free";
+const AI_URL = AI_CHAT_URL;
+const MODEL = AI_MODEL;
 const SEPARATOR = "\n@@FA@@\n";
 const CHUNK_CHARS = 3500; // per-request source budget (safe for context)
 
@@ -225,8 +226,7 @@ async function extractArticleText(url: string): Promise<string> {
 // ─── Translation (chunked, full article) ────────────────────────────────────
 
 async function callModel(system: string, user: string): Promise<string> {
-  const apiKey = process.env.AI_API_KEY;
-  if (!apiKey) throw new Error("AI_API_KEY_NOT_CONFIGURED");
+  const apiKey = aiApiKey();
   const res = await fetch(AI_URL, {
     method: "POST",
     headers: {

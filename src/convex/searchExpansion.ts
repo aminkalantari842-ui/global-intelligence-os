@@ -12,6 +12,7 @@
 import { action, internalAction, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
+import { AI_CHAT_URL, AI_MODEL, aiApiKey } from "./aiConfig";
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
@@ -266,8 +267,7 @@ export const proposeExpansion = action({
     ctx,
     { actorSlug, actorName, actorKind, actorCountry, dimension, existingActors, existingRelations },
   ): Promise<ExpansionProposal> => {
-    const apiKey = process.env.AI_API_KEY;
-    if (!apiKey) throw new Error("AI_API_KEY_NOT_CONFIGURED");
+    const apiKey = aiApiKey();
 
     // 1) deterministic search
     const search: SearchOutcome = await ctx.runAction(internal.searchExpansion.searchWeb, {
@@ -317,11 +317,11 @@ export const proposeExpansion = action({
       evidence,
     ].join("\n\n");
 
-    const res = await fetch("https://api.tokenrouter.com/v1/chat/completions", {
+    const res = await fetch(AI_CHAT_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "z-ai/glm-5.3-free",
+        model: AI_MODEL,
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -355,7 +355,7 @@ export const proposeExpansion = action({
       candidates: rawCandidates as ExpansionCandidate[],
       searchQueries: search.queries,
       resultCount: search.results.length,
-      model: "z-ai/glm-5.3-free",
+      model: AI_MODEL,
     };
   },
 });

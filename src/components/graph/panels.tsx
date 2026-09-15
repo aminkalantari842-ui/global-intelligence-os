@@ -15,6 +15,7 @@ import {
   fmtNum,
 } from "./metrics";
 import { buildIndex } from "./semantic";
+import { aiErrorKey } from "@/lib/aiError";
 import type { GraphActor, GraphRelation } from "./types";
 import {
   ArrowUpRight,
@@ -187,11 +188,8 @@ export function AiAnalystBox({
       setAnswer(res);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(
-        msg.includes("AI_API_KEY")
-          ? t("ai.noKey")
-          : t("ai.error"),
-      );
+      const key = aiErrorKey(msg);
+      setError(key ? t(key) : t("ai.error"));
     } finally {
       setBusy(false);
     }
