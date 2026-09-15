@@ -41,28 +41,13 @@ export function fmtAgo(ts: number, lang: string): string {
 }
 
 // ─── Bilingual display names ────────────────────────────────────────────────
-// The canonical registry stores latin names; this overlay maps the core
-// dataset to Persian display names so the canvas is truly bilingual.
-
-const FA_NAMES: Record<string, string> = {
-  iran: "ایران",
-  israel: "اسرائیل",
-  "united-states": "ایالات متحده",
-  russia: "روسیه",
-  china: "چین",
-  "european-union": "اتحادیه اروپا",
-  iaea: "آژانس بین‌المللی انرژی اتمی",
-  "saudi-arabia": "عربستان سعودی",
-  hezbollah: "حزب‌الله",
-  houthis: "انصارالله (حوثی‌ها)",
-  hamas: "حماس",
-  nato: "ناتو",
-  ukraine: "اوکراین",
-  turkey: "ترکیه",
-};
+// The canonical registry stores the Persian name in `name` (localized at
+// ingest from data/actorNamesFa) and the original Latin name in `nameEn`.
+// Persian is the default surface; English falls back to `nameEn` when present
+// so the EN toggle stays faithful to the source registry.
 
 export function actorDisplayName(actor: GraphActor, lang: string): string {
-  if (lang === "fa") return FA_NAMES[actor.slug] ?? actor.name;
+  if (lang === "en") return actor.nameEn ?? actor.name;
   return actor.name;
 }
 

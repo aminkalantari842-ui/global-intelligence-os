@@ -103,7 +103,9 @@ export function ExpansionPanel({
       );
       const proposal = (await propose({
         actorSlug: actor.slug,
-        actorName: actor.name,
+        // Search/prompt use the Latin form: the source corpus and web queries
+        // are overwhelmingly English, while the UI displays the Persian name.
+        actorName: actor.nameEn ?? actor.name,
         actorKind: actor.kind,
         actorCountry: actor.country,
         dimension: dimension as never,

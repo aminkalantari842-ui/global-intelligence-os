@@ -12,6 +12,7 @@ import { ME2026_BLOCK_EDGES, ME2026_FLASH_EDGES, ME2026_MATRIX } from "./data/me
   type Me2026Edge,
 } from "./data/me2026Types";
 import { latestSourceTs, resolveSources } from "./data/me2026Sources";
+import { ACTOR_NAMES_FA, faNameFor } from "./data/actorNamesFa";
 
 // Single shared analyst workspace (auth removed): watchlists, notes, saved
 // views and scenarios are global — one shared intelligence desk.
@@ -120,6 +121,7 @@ export const getGraph = query({
         _id: a._id,
         slug: a.slug,
         name: a.name,
+        nameEn: a.nameEn,
         aliases: a.aliases,
         kind: a.kind,
         country: a.country,
@@ -223,7 +225,14 @@ export const seedIfEmpty = mutation({
     const now = dbNow();
     const bySlug = new Map<string, any>();
     for (const a of SEED_ACTORS) {
-      const row = { ...a, mode: "ACTIVE" as const, modeSince: now };
+      // Persian is the canonical display name; Latin is preserved in nameEn.
+      const row = {
+        ...a,
+        name: faNameFor(a.slug, a.name),
+        nameEn: a.name,
+        mode: "ACTIVE" as const,
+        modeSince: now,
+      };
       const id = await ctx.db.insert("actors", row);
       bySlug.set(a.slug, id);
       await ctx.db.insert("changeLog", {
@@ -268,6 +277,30 @@ export const seedIfEmpty = mutation({
       });
     }
     return { seeded: bySlug.size };
+  },
+});
+
+// ─── Canonical Persian display names ────────────────────────────────────────
+// Idempotent localization pass: rewrites every known actor's display name to
+// its Persian form, preserving the original Latin name in `nameEn` the first
+// time it changes. Safe to call on every boot — rows already Persian are
+// skipped, so a fresh seed and an already-populated deployment converge on
+// the same state. Unknown slugs (AI-proposed / user-added) are left untouched.
+export const applyPersianNames = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const actors = await ctx.db.query("actors").collect();
+    let patched = 0;
+    for (const a of actors) {
+      const fa = ACTOR_NAMES_FA[a.slug];
+      if (!fa || a.name === fa) continue;
+      await ctx.db.patch(a._id, {
+        name: fa,
+        nameEn: a.nameEn ?? a.name,
+      });
+      patched += 1;
+    }
+    return { patched, total: actors.length };
   },
 });
 
@@ -536,7 +569,8 @@ export const ingestMe2026Actors = mutation({
       const firstSeen = T26("2026-09-13");
       await ctx.db.insert("actors", {
         slug: p.slug,
-        name: p.nameEn,
+        name: p.nameFa,
+        nameEn: p.nameEn,
         aliases: [p.nameFa, p.nameEn, p.id],
         kind: p.kind,
         country: p.country,
@@ -571,6 +605,8 @@ export const ingestMe2026Actors = mutation({
       const mergedAliases = Array.from(new Set([...(row.aliases ?? []), ...e.aliases]));
       const dims = ["", "", "", e.dims[0], "", e.dims[1], e.dims[2], "", "", "", "", "", "", "", "", e.dims[3]];
       await ctx.db.patch(row._id, {
+        name: faNameFor(e.slug, row.name),
+        nameEn: row.nameEn ?? row.name,
         aliases: mergedAliases,
         decisionCycle: buildDecisionCycle(dims),
         monitoring: buildMonitoring(dims, e.src),

@@ -1217,6 +1217,7 @@ export default function Dashboard() {
   // idempotently after the base seed (actors pass, then batched edge loop).
   const ingestActors = useMutation(api.graph.ingestMe2026Actors);
   const ingestRels = useMutation(api.graph.ingestMe2026Rels);
+  const applyNames = useMutation(api.graph.applyPersianNames);
 
   // ── Phase 2 data ──
   const watchlist = useQuery(api.graph.getWatchlist);
@@ -1264,6 +1265,18 @@ export default function Dashboard() {
         meRelsRunningRef.current = false;
       });
   }, [graph, graphActorCount, meStatus, meRelCursor, ingestRels]);
+
+  // Canonical Persian display names — one idempotent pass per actor-count
+  // change, so it also covers rows added by the ME2026 ingest above. The
+  // mutation only rewrites rows whose name is not yet Persian, so repeat
+  // calls are no-ops and never loop.
+  const namesRunForRef = useRef(-1);
+  useEffect(() => {
+    if (!graph || graphActorCount === 0) return;
+    if (namesRunForRef.current === graphActorCount) return;
+    namesRunForRef.current = graphActorCount;
+    void applyNames({});
+  }, [graph, graphActorCount, applyNames]);
 
   // E1: /dashboard?focus=<actorSlug> — deep link from the ThinkTanks board's
   // actor chips. Selects the actor once the graph has loaded.

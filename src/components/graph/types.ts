@@ -1,6 +1,7 @@
 export interface GraphActor {
   slug: string;
-  name: string;
+  name: string; // canonical display name (Persian)
+  nameEn?: string; // original Latin name, provenance only
   aliases: string[];
   kind: string;
   country: string;

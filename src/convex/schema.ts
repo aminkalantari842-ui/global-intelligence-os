@@ -23,7 +23,8 @@ const schema = defineSchema(
     // sources that reference the actor in the last 90 days.
     actors: defineTable({
       slug: v.string(), // stable canonical id, e.g. "iran"
-      name: v.string(), // canonical display name
+      name: v.string(), // canonical display name (Persian — see data/actorNamesFa)
+      nameEn: v.optional(v.string()), // original Latin name, provenance only
       aliases: v.array(v.string()), // language variants, acronyms
       kind: v.union(
         v.literal("STATE"),
