@@ -273,7 +273,7 @@ export default function WargameStudio({
       ...(hasAnalysis
         ? {
             analysis: JSON.stringify({ critique: ai.critique ?? null, narrative: ai.narrative ?? null, brief: ai.brief ?? null }),
-            model: "z-ai/glm-5.3-free",
+            model: "deepseek-v4.1",
           }
         : {}),
     });

@@ -8,12 +8,12 @@
 //                      https://generativelanguage.googleapis.com/v1beta/openai
 //   AI_MODEL     (optional) model id understood by that provider
 //
-// Defaults target TokenRouter's OpenAI-compatible endpoint. If a configured
+// Defaults target the VyceAI OpenAI-compatible endpoint. If a configured
 // model disappears from a provider's catalog, set AI_MODEL to any listed model
-// instead of editing seven modules.
+// instead of editing the AI modules.
 
-const DEFAULT_BASE_URL = "https://api.tokenrouter.com/v1";
-const DEFAULT_MODEL = "z-ai/glm-5.3";
+const DEFAULT_BASE_URL = "https://vyceai.com/v1";
+const DEFAULT_MODEL = "deepseek-v4.1";
 
 function trimTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, "");
