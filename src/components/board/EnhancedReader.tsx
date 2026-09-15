@@ -12,10 +12,12 @@ import {
   Check,
   Download,
   ExternalLink,
+  FileText,
   Highlighter,
   Languages,
   Loader2,
   MessageSquarePlus,
+  Network,
   RefreshCw,
   StickyNote,
   Trash2,
@@ -24,6 +26,8 @@ import {
 import { toFaDigits } from "@/components/graph/metrics";
 import { EvidenceFlow } from "./EvidenceFlow";
 import { AiPanel } from "./AiPanel";
+import { ArticleChat } from "./ArticleChat";
+import { ArticleGraph } from "./ArticleGraph";
 
 /** C5 key claims — deterministic sentence scoring, cached on the publication. */
 function KeyClaims({ pubId }: { pubId: string }) {
@@ -161,6 +165,11 @@ export default function EnhancedReader({
   const addHighlight = useMutation(api.reading.addHighlight);
   const [flash, setFlash] = useState<string | null>(null);
   const restoringRef = useRef(false);
+  // Reader view: full text (FA/EN), AI chat, or AI knowledge graph.
+  const [view, setView] = useState<"text" | "chat" | "graph">("text");
+  useEffect(() => {
+    setView("text");
+  }, [tab.pubId]);
   // "More like this" — deterministic TF-IDF over stored publications.
   const similar = useQuery(
     api.articles.getSimilar,
@@ -256,7 +265,29 @@ export default function EnhancedReader({
       {/* Toolbar */}
       <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-border px-3">
         <div className="flex min-w-0 items-center gap-1.5">
-          {tab.data && (
+          {/* Text / Chat / Graph view switcher (chat + graph need extracted text) */}
+          {tab.data && !tab.loading && (
+            <span className="flex items-center gap-0.5 rounded-md border border-border p-0.5">
+              {([
+                ["text", t("board.reader.viewText"), FileText],
+                ["chat", t("board.reader.viewChat"), MessageSquarePlus],
+                ["graph", t("board.reader.viewGraph"), Network],
+              ] as const).map(([v, label, Icon]) => (
+                <button
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors ${
+                    view === v
+                      ? "bg-foreground text-background"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  }`}
+                >
+                  <Icon className="size-3" /> {label}
+                </button>
+              ))}
+            </span>
+          )}
+          {tab.data && view === "text" && (
             <button
               onClick={onToggleSplit}
               className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors ${
@@ -334,8 +365,26 @@ export default function EnhancedReader({
         />
       )}
 
-      {/* Body — split or single */}
-      <div className="flex min-h-0 flex-1">
+      {/* Body — AI chat view */}
+      {view === "chat" && tab.data && (
+        <div className="min-h-0 flex-1">
+          <ArticleChat pubId={tab.pubId} />
+        </div>
+      )}
+
+      {/* Body — AI knowledge-graph view */}
+      {view === "graph" && tab.data && (
+        <div className="min-h-0 flex-1">
+          <ArticleGraph pubId={tab.pubId} />
+        </div>
+      )}
+
+      {/* Body — split or single (kept mounted in other views to preserve
+          scroll position and highlights; hidden with display:none) */}
+      <div
+        className="flex min-h-0 flex-1"
+        style={{ display: view === "text" ? undefined : "none" }}
+      >
         <div
           ref={scrollRef}
           onScroll={onScroll}

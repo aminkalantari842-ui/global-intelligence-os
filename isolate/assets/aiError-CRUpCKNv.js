@@ -1,0 +1,1 @@
+function i(n){const e=(n??"").toLowerCase();return e.includes("ai_api_key")?"ai.noKey":e.includes("need_more_corpus")||e.includes("nothing_overnight")?"ai.needCorpus":e.includes("insufficient_user_quota")||e.includes("credit limit")||e.includes("quota")?"ai.quota":e.includes("model_not_found")||e.includes("no available channel")?"ai.modelUnavailable":null}export{i as a};

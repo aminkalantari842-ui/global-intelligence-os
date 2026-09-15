@@ -150,6 +150,29 @@ export const digestCorpus = query({
   },
 });
 
+// Cached-artifact lookup by exact (pubIds, kind) — used by the per-article
+// knowledge graph so re-opening an article costs zero model calls.
+export const getArtifact = query({
+  args: {
+    pubIds: v.array(v.id("publications")),
+    kind: v.union(
+      v.literal("ARTICLE_GRAPH"),
+      v.literal("BRIEF"),
+      v.literal("THESIS"),
+      v.literal("RED_TEAM"),
+      v.literal("SUMMARY"),
+      v.literal("CHAT"),
+    ),
+  },
+  handler: async (ctx, { pubIds, kind }) => {
+    const rows = await ctx.db
+      .query("aiArtifacts")
+      .withIndex("by_pubs", (q) => q.eq("pubIds", pubIds))
+      .collect();
+    return rows.filter((r) => r.kind === kind).map((r) => ({ text: r.text, model: r.model, ts: r.ts }));
+  },
+});
+
 // ─── Artifact persistence (ASSESSMENT class, full provenance) ──────────────
 
 export const saveArtifact = mutation({
@@ -159,6 +182,7 @@ export const saveArtifact = mutation({
       v.literal("BRIEF"), v.literal("THESIS"), v.literal("RED_TEAM"),
       v.literal("SUMMARY"), v.literal("COMPARE"), v.literal("RADAR"),
       v.literal("TREND"), v.literal("DIGEST"), v.literal("CORPUS_QA"),
+      v.literal("CHAT"), v.literal("ARTICLE_GRAPH"),
     ),
     text: v.string(),
     model: v.string(),

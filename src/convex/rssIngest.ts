@@ -159,6 +159,23 @@ function mirrorUrl(website?: string): string | null {
   }
 }
 
+/**
+ * Second-chance mirror: Bing News RSS for the same domain. Unlike Google
+ * News, Bing wraps links in apiclick.aspx with the real URL in the `url`
+ * query parameter — recoverable, so extraction can reach the original
+ * article. Toggled as an extra rung, never replaces a healthy primary feed.
+ */
+function bingMirrorUrl(website?: string): string | null {
+  if (!website) return null;
+  try {
+    const host = new URL(website).hostname.replace(/^www\./, "");
+    if (!host || host.includes("bing.com")) return null;
+    return `https://www.bing.com/news/search?q=site:${encodeURIComponent(host)}&format=RSS`;
+  } catch {
+    return null;
+  }
+}
+
 /** Run promise-producing tasks with bounded parallelism. */
 async function pooled<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length);
@@ -188,6 +205,43 @@ interface TankRow {
   name: string;
   website?: string;
   feedUrl: string;
+}
+
+/**
+ * Unwrap aggregator redirect wrappers so stored article URLs point at the
+ * real publisher page (extraction must reach the original think tank).
+ *
+ *  - Bing News apiclick.aspx: real URL in the `url` query parameter.
+ *  - Google News /rss/articles/<id>: old-format ids are base64 payloads that
+ *    may contain the URL inline; new-format ids (AU_yq…) are opaque and
+ *    cannot be decoded server-side anymore — those are left untouched and
+ *    resolve only through the Bing mirror at ingest time.
+ */
+export function unwrapAggregatorUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes("bing.com")) {
+      const real = u.searchParams.get("url");
+      if (real && /^https?:\/\//.test(real)) return real;
+    }
+    if (u.hostname.includes("news.google.com")) {
+      const m = u.pathname.match(/\/articles\/([A-Za-z0-9_-]+)/);
+      if (m) {
+        let b = m[1].replace(/-/g, "+").replace(/_/g, "/");
+        b += "=".repeat((4 - (b.length % 4)) % 4);
+        try {
+          const raw = atob(b);
+          const hit = raw.match(/https?:\/\/[\x20-\x7e]+/);
+          if (hit) return hit[0].split(/\s/)[0];
+        } catch {
+          /* not decodable — leave as-is */
+        }
+      }
+    }
+    return url;
+  } catch {
+    return url;
+  }
 }
 
 /**
@@ -222,6 +276,17 @@ async function refreshAllTanks(
         }
       }
 
+      // 2b) Second chance: Bing News mirror — its links carry the real URL in
+      // a query param, so extraction can actually reach the publisher page
+      // (Google News new-format ids cannot be decoded server-side anymore).
+      if (feedItems.length === 0) {
+        const bing = bingMirrorUrl(tank.website);
+        if (bing) {
+          feedItems = (await fetchFeed(bing)).map((it) => ({ ...it, link: unwrapAggregatorUrl(it.link) }));
+          if (feedItems.length > 0) source = "fallback";
+        }
+      }
+
       const latencyMs = Date.now() - t0;
       const fresh = feedItems.slice(0, 25);
       if (fresh.length > 0) {
@@ -231,7 +296,7 @@ async function refreshAllTanks(
           tankSlug: tank.slug,
           items: fresh.map((item) => ({
             title: item.title,
-            url: item.link,
+            url: unwrapAggregatorUrl(item.link),
             summary: item.summary,
             publishedAt: item.publishedAt,
             topics: item.topics,

@@ -177,7 +177,15 @@ export const listPublications = query({
       );
     }
 
-    return pubs.slice(0, maxLimit);
+    // Provenance: aggregator redirect wrappers (Google News) never carry the
+    // real article URL, so point the UI at the tank's own site instead.
+    const sites = new Map<string, string | undefined>();
+    for (const t of await ctx.db.query("thinkTanks").collect()) sites.set(t.slug, t.website);
+
+    return pubs.slice(0, maxLimit).map((p) => ({
+      ...p,
+      url: p.url.includes("news.google.com") ? (sites.get(p.thinkTankSlug) ?? p.url) : p.url,
+    }));
   },
 });
 

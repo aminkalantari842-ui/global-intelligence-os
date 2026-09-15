@@ -720,6 +720,10 @@ const schema = defineSchema(
         v.literal("TREND"),
         v.literal("DIGEST"),
         v.literal("CORPUS_QA"),
+        // Per-article grounded chat transcript (AI proposes, article text grounds).
+        v.literal("CHAT"),
+        // Per-article AI knowledge-graph (JSON entities/relations over the article).
+        v.literal("ARTICLE_GRAPH"),
       ),
       text: v.string(),
       model: v.string(),

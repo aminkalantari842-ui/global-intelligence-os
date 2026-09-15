@@ -297,3 +297,109 @@ export const dailyDigest = action({
     return { text, model: MODEL, count: pubs.length };
   },
 });
+
+// ─── Per-article grounded chat (Q&A over the article's own full text) ──────
+
+export const articleChat = action({
+  args: {
+    pubId: v.id("publications"),
+    history: v.array(
+      v.object({
+        role: v.union(v.literal("user"), v.literal("assistant")),
+        content: v.string(),
+      }),
+    ),
+  },
+  handler: async (ctx, { pubId, history }) => {
+    const last = history[history.length - 1];
+    const question = last?.content?.trim().slice(0, 600) ?? "";
+    if (!question) throw new Error("EMPTY_QUESTION");
+    const pub = (await ctx.runQuery(ref.pubFetch, { pubId })) as PubT | null;
+    if (!pub) throw new Error("PUB_NOT_FOUND");
+    const body = (pub.text ?? "").trim();
+    if (body.length < 80) throw new Error("ARTICLE_NOT_EXTRACTED");
+
+    // Last few turns keep the conversational context; the article body is
+    // always re-anchored so the model can never drift to outside knowledge.
+    const convo = history
+      .slice(-6)
+      .map((m) => `${m.role === "user" ? "پرسش" : "پاسخ"}: ${m.content.slice(0, 500)}`)
+      .join("\n");
+    const text = await runAI(
+      "You are an analyst answering questions about ONE specific think-tank article. " +
+        "STRICT RULES: (1) Answer ONLY from the provided article text — if the answer " +
+        "is not in it, say so explicitly in Persian and do not speculate. " +
+        "(2) Answer in Persian (Farsi). (3) Be concise and concrete; quote key phrases " +
+        "verbatim where useful. (4) This is an ASSESSMENT-class AI output, not observed fact.",
+      `Article (${pub.tank}): "${pub.title}"\n\n${body.slice(0, 12000)}\n\n---\nConversation so far:\n${convo}\n\nNew question: ${question}`,
+      900,
+    );
+    return { text, model: MODEL };
+  },
+});
+
+// ─── Per-article AI knowledge graph (entities + relations from the text) ───
+
+interface KgNode {
+  id: string;
+  label: string;
+  type: string;
+}
+interface KgLink {
+  source: string;
+  target: string;
+  label: string;
+  weight: number;
+}
+
+export const articleKnowledgeGraph = action({
+  args: { pubId: v.id("publications") },
+  handler: async (ctx, { pubId }): Promise<{ nodes: KgNode[]; links: KgLink[]; cached: boolean; model: string }> => {
+    const pub = (await ctx.runQuery(ref.pubFetch, { pubId })) as PubT | null;
+    if (!pub) throw new Error("PUB_NOT_FOUND");
+    const body = (pub.text ?? "").trim();
+    if (body.length < 80) throw new Error("ARTICLE_NOT_EXTRACTED");
+
+    // Cached artifact: same article → same graph, zero model calls on re-open.
+    const existing = (await ctx.runQuery(ref.getArtifact, { pubIds: [pubId] as PubId, kind: "ARTICLE_GRAPH" })) as
+      | { text: string; model: string }[]
+      | null;
+    if (existing && existing.length > 0) {
+      try {
+        const parsed = JSON.parse(existing[0].text) as { nodes: KgNode[]; links: KgLink[] };
+        if (parsed?.nodes?.length) return { ...parsed, cached: true, model: existing[0].model };
+      } catch {
+        /* stale row — regenerate below */
+      }
+    }
+
+    const raw = await runAI(
+      "Extract a compact knowledge graph from this think-tank article. " +
+        "Return STRICT JSON only, no markdown fences, no commentary: " +
+        '{"nodes":[{"id":"n1","label":"…","type":"…"}],"links":[{"source":"n1","target":"n2","label":"…","weight":1..5}]}. ' +
+        "Node types: PERSON | ORG | STATE | MILITANT | PLACE | EVENT | THEME. " +
+        "6–14 nodes, 6–18 links; labels in Persian; link labels short Persian verb phrases (e.g. «تحریم کرد», «متحد است»). " +
+        "Weight = strength of the relation (5 = central to the article, 1 = passing mention). Only relations stated in the text.",
+      `Article (${pub.tank}): "${pub.title}"\n\n${body.slice(0, 12000)}`,
+      1400,
+    );
+    // Robust JSON extraction (model may wrap in fences despite instructions).
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start === -1 || end === -1) throw new Error("KG_PARSE_FAILED");
+    const parsed = JSON.parse(raw.slice(start, end + 1)) as { nodes: KgNode[]; links: KgLink[] };
+    if (!Array.isArray(parsed.nodes) || parsed.nodes.length === 0) throw new Error("KG_PARSE_FAILED");
+
+    const payload = JSON.stringify({
+      nodes: parsed.nodes.slice(0, 16),
+      links: parsed.links.slice(0, 24),
+    });
+    await ctx.runMutation(ref.saveArtifact, {
+      pubIds: [pubId] as PubId,
+      kind: "ARTICLE_GRAPH",
+      text: payload,
+      model: MODEL,
+    });
+    return { nodes: parsed.nodes.slice(0, 16), links: parsed.links.slice(0, 24), cached: false, model: MODEL };
+  },
+});
