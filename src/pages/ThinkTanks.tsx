@@ -2,7 +2,7 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useI18n } from "@/i18n/context";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { aiErrorKey } from "@/lib/aiError";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -299,6 +299,15 @@ export default function ThinkTanks() {
 
   const syncRegistry = useMutation(api.thinkTankSeed.syncRegistry);
 
+  // E2 deep link: /thinktanks?author=<slug> arrives from graph-console mentions.
+  // The URL stays the source of truth, so the link is shareable; closing the
+  // panel records the dismissed slug instead of mutating the query string.
+  const [searchParams] = useSearchParams();
+  const authorParam = searchParams.get("author") ?? undefined;
+  const [closedAuthor, setClosedAuthor] = useState<string | undefined>(undefined);
+  const authorsOpen = showAuthors || (!!authorParam && authorParam !== closedAuthor);
+  const activeAuthor = authorParam && authorParam !== closedAuthor ? authorParam : authorSlug;
+
   // Ensure the full 114-tank registry is present (idempotent; runs once).
   useEffect(() => {
     setSyncing(true);
@@ -418,6 +427,7 @@ export default function ThinkTanks() {
             <button
               onClick={() => {
                 setAuthorSlug(undefined);
+                setClosedAuthor(authorParam);
                 setShowAuthors(true);
               }}
               className="flex items-center gap-1 rounded-lg border border-border/80 bg-card/60 px-2.5 py-1.5 text-[11px] text-muted-foreground transition-all hover:border-foreground/30 hover:text-foreground"
@@ -972,12 +982,13 @@ export default function ThinkTanks() {
       {showSources && <SourcesManager onClose={() => setShowSources(false)} />}
 
       {/* A4/B4 analyst pages + watchlist — opens publications on the board */}
-      {showAuthors && (
+      {authorsOpen && (
         <AuthorsPanel
-          key={authorSlug ?? "all"}
-          initialSlug={authorSlug}
+          key={activeAuthor ?? "all"}
+          initialSlug={activeAuthor}
           onClose={() => {
             setShowAuthors(false);
+            setClosedAuthor(authorParam);
             setAuthorSlug(undefined);
           }}
           onOpenPub={(pubId) => {

@@ -309,6 +309,60 @@ export const getAuthorFeed = query({
   },
 });
 
+/** E1/E2 analyst → actor graph: which registered actors this analyst writes
+ * about, joined deterministically through publication mentions (bounded to the
+ * newest 80 matched publications so the query stays cheap and reactive). */
+export const getAuthorActors = query({
+  args: { authorSlug: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, { authorSlug, limit }) => {
+    const author = await ctx.db
+      .query("authorPages")
+      .withIndex("by_slug", (q) => q.eq("slug", authorSlug))
+      .unique();
+    if (!author) return [];
+
+    const pubs = await ctx.db
+      .query("publications")
+      .withIndex("by_thinktank", (q) => q.eq("thinkTankSlug", author.tankSlug))
+      .order("desc")
+      .take(400);
+    const matched = pubs
+      .filter((p) => bylineMatches(p.author ?? "", author.name))
+      .slice(0, 80);
+
+    const counts = new Map<string, { count: number; lastTs: number; sample: string }>();
+    for (const p of matched) {
+      const mentions = await ctx.db
+        .query("actorMentions")
+        .withIndex("by_pub", (q) => q.eq("pubId", p._id))
+        .collect();
+      for (const m of mentions) {
+        const cur = counts.get(m.actorSlug);
+        counts.set(m.actorSlug, {
+          count: (cur?.count ?? 0) + 1,
+          lastTs: Math.max(cur?.lastTs ?? 0, m.ts),
+          sample: cur?.sample ?? p.title,
+        });
+      }
+    }
+    if (counts.size === 0) return [];
+
+    const actors = await ctx.db.query("actors").collect();
+    const bySlug = new Map(actors.map((a) => [a.slug, a]));
+    return [...counts.entries()]
+      .filter(([slug]) => bySlug.has(slug))
+      .map(([slug, agg]) => ({
+        slug,
+        name: bySlug.get(slug)!.name,
+        nameEn: bySlug.get(slug)!.nameEn ?? null,
+        kind: bySlug.get(slug)!.kind,
+        ...agg,
+      }))
+      .sort((a, b) => b.count - a.count || b.lastTs - a.lastTs)
+      .slice(0, limit ?? 12);
+  },
+});
+
 /** B4 Watchlist feed: newest pieces from followed analysts, with tank context. */
 export const getWatchlistFeed = query({
   args: { limit: v.optional(v.number()) },

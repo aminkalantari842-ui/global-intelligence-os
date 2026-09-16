@@ -1,4 +1,4 @@
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation, mutation, query, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { SEED_ACTORS, SEED_RELATIONSHIPS } from "./data/seed";
 import {
@@ -13,6 +13,7 @@ import { ME2026_BLOCK_EDGES, ME2026_FLASH_EDGES, ME2026_MATRIX } from "./data/me
 } from "./data/me2026Types";
 import { latestSourceTs, resolveSources } from "./data/me2026Sources";
 import { ACTOR_NAMES_FA, faNameFor } from "./data/actorNamesFa";
+import { slugifyName } from "./lib";
 
 // Single shared analyst workspace (auth removed): watchlists, notes, saved
 // views and scenarios are global — one shared intelligence desk.
@@ -481,23 +482,92 @@ export const getActorCoverage = query({
   },
 });
 
+/** First byline in a multi-author field (matches authorPages keys). */
+function primaryByline(author: string | undefined): string {
+  return (
+    (author ?? "")
+      .split(/;|,| and | & /)
+      .map((s) => s.trim())
+      .filter((n) => n.length >= 4 && n.length <= 80)[0] ?? ""
+  );
+}
+
+async function tankNameMap(ctx: QueryCtx): Promise<Map<string, string>> {
+  const tanks = await ctx.db
+    .query("thinkTanks")
+    .withIndex("by_enabled", (q) => q.eq("enabled", true))
+    .collect();
+  return new Map(tanks.map((t) => [t.slug, t.name]));
+}
+
+/** E2 mentions feed: recent publications that mention the actor, attributed to
+ * the analyst who wrote them (authorSlug keys the A4 author page). */
 export const getActorMentionsRecent = query({
   args: { actorSlug: v.string(), limit: v.optional(v.number()) },
   handler: async (ctx, { actorSlug, limit }) => {
     const mentions = await ctx.db
       .query("actorMentions")
-      .withIndex("by_actor", (q) =>
-        q.eq("actorSlug", actorSlug),
-      )
+      .withIndex("by_actor", (q) => q.eq("actorSlug", actorSlug))
       .collect();
     mentions.sort((a, b) => b.ts - a.ts);
+    const tanks = await tankNameMap(ctx);
     const rows = [];
     for (const m of mentions.slice(0, Math.min(limit ?? 5, 20))) {
       const pub = await ctx.db.get(m.pubId);
       if (!pub) continue;
-      rows.push({ _id: m._id, url: pub.url, title: pub.title, ts: m.ts });
+      const byline = primaryByline(pub.author);
+      rows.push({
+        _id: m._id,
+        pubId: pub._id,
+        url: pub.url,
+        title: pub.title,
+        ts: m.ts,
+        tankSlug: m.tankSlug,
+        tankName: tanks.get(m.tankSlug) ?? m.tankSlug,
+        author: byline,
+        authorSlug: byline ? slugifyName(byline) : "",
+      });
     }
     return rows;
+  },
+});
+
+/** E2 reverse index: which analysts cover this actor, ranked by mention count.
+ * Bounded read (newest 80 mentions) so the inspector stays inside budget. */
+export const getActorAnalysts = query({
+  args: { actorSlug: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, { actorSlug, limit }) => {
+    const mentions = await ctx.db
+      .query("actorMentions")
+      .withIndex("by_actor", (q) => q.eq("actorSlug", actorSlug))
+      .collect();
+    mentions.sort((a, b) => b.ts - a.ts);
+
+    const tanks = await tankNameMap(ctx);
+    const byAnalyst = new Map<
+      string,
+      { authorSlug: string; author: string; tankSlug: string; tankName: string; count: number; lastTs: number; sample: string }
+    >();
+    for (const m of mentions.slice(0, 80)) {
+      const pub = await ctx.db.get(m.pubId);
+      if (!pub) continue;
+      const byline = primaryByline(pub.author);
+      // Publications without a byline still count — filed under the tank.
+      const key = byline ? slugifyName(byline) : `tank:${m.tankSlug}`;
+      const cur = byAnalyst.get(key);
+      byAnalyst.set(key, {
+        authorSlug: byline ? key : "",
+        author: byline || tanks.get(m.tankSlug) || m.tankSlug,
+        tankSlug: m.tankSlug,
+        tankName: tanks.get(m.tankSlug) ?? m.tankSlug,
+        count: (cur?.count ?? 0) + 1,
+        lastTs: Math.max(cur?.lastTs ?? 0, m.ts),
+        sample: cur?.sample ?? pub.title,
+      });
+    }
+    return [...byAnalyst.values()]
+      .sort((a, b) => b.count - a.count || b.lastTs - a.lastTs)
+      .slice(0, limit ?? 6);
   },
 });
 

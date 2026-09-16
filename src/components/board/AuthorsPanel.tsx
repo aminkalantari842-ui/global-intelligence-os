@@ -8,6 +8,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useI18n } from "@/i18n/context";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router";
 import {
   BarChart3,
   Building2,
@@ -16,6 +17,7 @@ import {
   FileText,
   Layers,
   Loader2,
+  Network,
   Search,
   Star,
   UserRound,
@@ -91,6 +93,11 @@ export function AuthorsPanel({
     selected ? { authorSlug: selected, limit: 30 } : "skip",
   );
   const feed = useQuery(api.enrichment.getWatchlistFeed, { limit: 25 });
+  // E1: which registered actors this analyst covers (mention-derived).
+  const actors = useQuery(
+    api.enrichment.getAuthorActors,
+    selected ? { authorSlug: selected, limit: 12 } : "skip",
+  );
   const toggleWatch = useMutation(api.enrichment.toggleAuthorWatch);
   const buildIndex = useMutation(api.enrichment.buildAuthorIndex);
 
@@ -288,6 +295,31 @@ export function AuthorsPanel({
                       </div>
                     ))}
                   </div>
+
+                  {/* E1: actor coverage — jumps into the graph console focused */}
+                  {actors && actors.length > 0 && (
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <p className="tt-kicker">{t("authors.actors")}</p>
+                        <span className="text-[9px] text-muted-foreground">{t("authors.actorsHint")}</span>
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {actors.map((a) => (
+                          <Link
+                            key={a.slug}
+                            to={`/dashboard?focus=${encodeURIComponent(a.slug)}`}
+                            title={`${t("authors.openInGraph")} · ${a.kind}`}
+                            className="group flex items-center gap-1 rounded-full border border-sky-500/35 bg-sky-500/5 px-2 py-0.5 text-[10px] font-medium text-sky-700 transition-colors hover:border-sky-500/70 hover:bg-sky-500/15 dark:text-sky-400"
+                          >
+                            <Network className="size-2.5 shrink-0" />
+                            {lang === "en" ? a.nameEn ?? a.name : a.name}
+                            <span className="tabular-nums opacity-60">{num(a.count)}</span>
+                            <span className="opacity-0 transition-opacity group-hover:opacity-70">↗</span>
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {detail.stats.programs.length > 0 && (
                     <div>

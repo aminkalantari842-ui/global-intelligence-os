@@ -2,10 +2,11 @@
 // change feed. All numeric displays come from deterministic Convex queries;
 // the AI box is the only LLM surface and is explicitly labeled as synthesis.
 
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useI18n } from "@/i18n/context";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import {
   actorDisplayName,
@@ -76,6 +77,8 @@ export function CoverageBlock({ actorSlug }: { actorSlug: string }) {
     actorSlug,
     limit: 5,
   });
+  // E2 reverse index: which analysts write about this actor (→ their pages).
+  const analysts = useQuery(api.graph.getActorAnalysts, { actorSlug, limit: 5 });
 
   return (
     <div className="rounded-md border border-border/70 bg-card px-3 py-3">
@@ -115,22 +118,87 @@ export function CoverageBlock({ actorSlug }: { actorSlug: string }) {
       {mentions !== undefined && mentions.length > 0 && (
         <div className="mt-3 space-y-1 border-t border-border/60 pt-2">
           {mentions.map((m) => (
-            <a
-              key={m._id}
-              href={m.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="group flex items-start gap-1.5 rounded px-1 py-0.5 hover:bg-muted/60"
-            >
-              <Newspaper className="mt-0.5 size-3 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 flex-1 truncate text-[11px] leading-4 group-hover:underline">
-                {m.title}
-              </span>
-              <span className="shrink-0 text-[10px] text-muted-foreground">
-                {fmtAgo(m.ts, lang)}
-              </span>
-            </a>
+            <div key={m._id} className="rounded px-1 py-0.5 hover:bg-muted/60">
+              <a
+                href={m.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="group flex items-start gap-1.5"
+              >
+                <Newspaper className="mt-0.5 size-3 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate text-[11px] leading-4 group-hover:underline">
+                  {m.title}
+                </span>
+                <span className="shrink-0 text-[10px] text-muted-foreground">
+                  {fmtAgo(m.ts, lang)}
+                </span>
+              </a>
+              {/* Attribution: the analyst who wrote it — links to their page. */}
+              {m.author && (
+                <p className="ms-4 flex flex-wrap items-center gap-1 text-[9.5px] text-muted-foreground">
+                  {m.authorSlug ? (
+                    <Link
+                      to={`/thinktanks?author=${encodeURIComponent(m.authorSlug)}`}
+                      className="font-medium text-foreground/75 underline-offset-4 hover:text-foreground hover:underline"
+                    >
+                      {m.author}
+                    </Link>
+                  ) : (
+                    <span>{m.author}</span>
+                  )}
+                  <span className="opacity-50">·</span>
+                  <span>{m.tankName}</span>
+                </p>
+              )}
+            </div>
           ))}
+        </div>
+      )}
+
+      {/* E2: who covers this actor most — per-analyst reverse index */}
+      {analysts !== undefined && analysts.length > 0 && (
+        <div className="mt-3 space-y-1 border-t border-border/60 pt-2">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            {t("graph.mentionsByAnalyst")}
+          </p>
+          {analysts.map((a) => {
+            const body = (
+              <>
+                <span className="min-w-0 flex-1 truncate">
+                  {a.author}
+                  {/* Unbylined pieces are filed under the tank — don't repeat it. */}
+                  {a.authorSlug && (
+                    <span className="ms-1 text-[9.5px] text-muted-foreground">{a.tankName}</span>
+                  )}
+                </span>
+                <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-muted">
+                  <span
+                    className="block h-full rounded-full bg-sky-500/70"
+                    style={{ width: `${Math.min(100, a.count * 12)}%` }}
+                  />
+                </span>
+                <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                  {a.count}
+                </span>
+              </>
+            );
+            const cls =
+              "flex items-center gap-2 rounded px-1 py-0.5 text-[11px] hover:bg-muted/60";
+            return a.authorSlug ? (
+              <Link
+                key={a.authorSlug}
+                to={`/thinktanks?author=${encodeURIComponent(a.authorSlug)}`}
+                title={a.sample}
+                className={`${cls} hover:underline hover:underline-offset-4`}
+              >
+                {body}
+              </Link>
+            ) : (
+              <div key={`${a.tankSlug}-${a.author}`} title={a.sample} className={cls}>
+                {body}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
