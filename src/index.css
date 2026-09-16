@@ -165,7 +165,11 @@
   mask-image: radial-gradient(1200px 620px at 50% 0%, black 0%, transparent 78%);
   opacity: 0.35;
 }
-.tt-atmosphere > * {
+/* Keep the page content above the backdrop — scoped to the layout elements
+   only. An unscoped `> *` rule would also hit overlay/portal roots that are
+   direct children (modals), overriding their `position: fixed`. */
+.tt-atmosphere > header,
+.tt-atmosphere > main {
   position: relative;
   z-index: 1;
 }

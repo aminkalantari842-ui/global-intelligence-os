@@ -607,6 +607,8 @@ const schema = defineSchema(
       viewMode: v.optional(
         v.union(v.literal("comfortable"), v.literal("compact"), v.literal("list")),
       ),
+      // How many topic columns render at once (the rest scroll into view).
+      columns: v.optional(v.number()),
       updatedAt: v.number(),
     }).index("by_user", ["userId"]),
 

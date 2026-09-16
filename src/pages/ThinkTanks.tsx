@@ -3,6 +3,7 @@ import { api } from "@/convex/_generated/api";
 import { useI18n } from "@/i18n/context";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router";
+import { createPortal } from "react-dom";
 import { aiErrorKey } from "@/lib/aiError";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -277,13 +278,16 @@ export default function ThinkTanks() {
   const [batchDone, setBatchDone] = useState(0);
   const [batchKey, setBatchKey] = useState(0); // bump → TranslationBlocks auto-open
   // "board" = Persian topic columns · "list" = classic publication list
-  const [view, setView] = useState<"board" | "list">("board");
+  // "analysts" = A4/B4 analyst & program pages (own tab, not a hidden modal)
+  const [view, setView] = useState<"board" | "list" | "analysts">("board");
   // A1/A2 source catalog modal + B/E/H signals strip
   const [showSources, setShowSources] = useState(false);
   const [showSignals, setShowSignals] = useState(false);
-  // A4/B4 analyst & program pages + personal watchlist column
-  const [showAuthors, setShowAuthors] = useState(false);
+  // A4/B4 analyst pages + personal watchlist column
   const [authorSlug, setAuthorSlug] = useState<string | undefined>();
+  // Reader bylines open the analyst page as an overlay so the open reader /
+  // board tabs are not unmounted.
+  const [overlayAuthor, setOverlayAuthor] = useState<string | undefined>(undefined);
 
   // Reader bylines dispatch "authors:open" — deep-link into the analyst page.
   useEffect(() => {
@@ -291,7 +295,7 @@ export default function ThinkTanks() {
       const slug = (e as CustomEvent<{ slug?: string }>).detail?.slug;
       if (!slug) return;
       setAuthorSlug(slug);
-      setShowAuthors(true);
+      setOverlayAuthor(slug);
     };
     window.addEventListener("authors:open", onOpenAuthor);
     return () => window.removeEventListener("authors:open", onOpenAuthor);
@@ -305,7 +309,8 @@ export default function ThinkTanks() {
   const [searchParams] = useSearchParams();
   const authorParam = searchParams.get("author") ?? undefined;
   const [closedAuthor, setClosedAuthor] = useState<string | undefined>(undefined);
-  const authorsOpen = showAuthors || (!!authorParam && authorParam !== closedAuthor);
+  // A URL deep-link forces the analysts tab until the user leaves it.
+  const authorsView = view === "analysts" || (!!authorParam && authorParam !== closedAuthor);
   const activeAuthor = authorParam && authorParam !== closedAuthor ? authorParam : authorSlug;
 
   // Ensure the full 114-tank registry is present (idempotent; runs once).
@@ -428,9 +433,13 @@ export default function ThinkTanks() {
               onClick={() => {
                 setAuthorSlug(undefined);
                 setClosedAuthor(authorParam);
-                setShowAuthors(true);
+                setView("analysts");
               }}
-              className="flex items-center gap-1 rounded-lg border border-border/80 bg-card/60 px-2.5 py-1.5 text-[11px] text-muted-foreground transition-all hover:border-foreground/30 hover:text-foreground"
+              className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] transition-all ${
+                authorsView
+                  ? "border-amber-500/60 bg-amber-500/10 text-amber-600"
+                  : "border-border/80 bg-card/60 text-muted-foreground hover:border-foreground/30 hover:text-foreground"
+              }`}
             >
               <Users className="size-3.5" /> {t("authors.title")}
             </button>
@@ -555,17 +564,30 @@ export default function ThinkTanks() {
         {/* ── View switcher + signals rail ─────────────────────────────────── */}
         <div className="mt-4 flex shrink-0 items-center justify-between gap-3">
           <div className="flex rounded-xl border border-border/80 bg-card/60 p-1">
-            {(["board", "list"] as const).map((v) => (
+            {(["board", "list", "analysts"] as const).map((v) => (
               <button
                 key={v}
-                onClick={() => setView(v)}
-                className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition-all ${
-                  view === v
+                onClick={() => {
+                  setView(v);
+                  setClosedAuthor(authorParam);
+                }}
+                className={`flex items-center gap-1.5 rounded-lg px-4 py-1.5 text-xs font-semibold transition-all ${
+                  authorsView && v === "analysts"
                     ? "bg-foreground text-background shadow"
-                    : "text-muted-foreground hover:text-foreground"
+                    : !authorsView && view === v
+                      ? "bg-foreground text-background shadow"
+                      : "text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {v === "board" ? t("tt.viewBoard") : t("tt.viewList")}
+                {v === "board" ? (
+                  t("tt.viewBoard")
+                ) : v === "list" ? (
+                  t("tt.viewList")
+                ) : (
+                  <>
+                    <Users className="size-3.5" /> {t("authors.title")}
+                  </>
+                )}
               </button>
             ))}
           </div>
@@ -579,7 +601,32 @@ export default function ThinkTanks() {
           </div>
         )}
 
-        {view === "board" ? (
+        {authorsView ? (
+          /* ── Analysts & programs tab (A4/B4) ───────────────────────────── */
+          <div className="tt-rise tt-rise-2 mt-3 flex min-h-0 flex-1 flex-col">
+            <AuthorsPanel
+              key={activeAuthor ?? "all"}
+              mode="inline"
+              initialSlug={activeAuthor}
+              onClose={() => {
+                setView("board");
+                setClosedAuthor(authorParam);
+                setAuthorSlug(undefined);
+              }}
+              onOpenPub={(pubId) => {
+                setView("board");
+                // The board mounts its listener on the next paint — dispatch after.
+                window.setTimeout(
+                  () =>
+                    window.dispatchEvent(
+                      new CustomEvent("board:open-pub", { detail: pubId }),
+                    ),
+                  80,
+                );
+              }}
+            />
+          </div>
+        ) : view === "board" ? (
           <div className="tt-rise tt-rise-2 mt-3 flex min-h-0 flex-1 flex-col">
             <TopicBoard />
           </div>
@@ -978,33 +1025,35 @@ export default function ThinkTanks() {
         )}
       </main>
 
-      {/* A1/A2 source catalog + health manager */}
-      {showSources && <SourcesManager onClose={() => setShowSources(false)} />}
+      {/* A1/A2 source catalog + health manager (portal: escapes the page
+          backdrop container so it always overlays the viewport) */}
+      {showSources &&
+        createPortal(
+          <SourcesManager onClose={() => setShowSources(false)} />,
+          document.body,
+        )}
 
-      {/* A4/B4 analyst pages + watchlist — opens publications on the board */}
-      {authorsOpen && (
-        <AuthorsPanel
-          key={activeAuthor ?? "all"}
-          initialSlug={activeAuthor}
-          onClose={() => {
-            setShowAuthors(false);
-            setClosedAuthor(authorParam);
-            setAuthorSlug(undefined);
-          }}
-          onOpenPub={(pubId) => {
-            setShowAuthors(false);
-            setView("board");
-            // The board mounts its listener on the next paint — dispatch after.
-            window.setTimeout(
-              () =>
-                window.dispatchEvent(
-                  new CustomEvent("board:open-pub", { detail: pubId }),
-                ),
-              80,
-            );
-          }}
-        />
-      )}
+      {/* Reader byline → analyst page overlay (keeps the board + open tabs) */}
+      {overlayAuthor &&
+        createPortal(
+          <AuthorsPanel
+            key={overlayAuthor}
+            initialSlug={overlayAuthor}
+            onClose={() => setOverlayAuthor(undefined)}
+            onOpenPub={(pubId) => {
+              setOverlayAuthor(undefined);
+              setView("board");
+              window.setTimeout(
+                () =>
+                  window.dispatchEvent(
+                    new CustomEvent("board:open-pub", { detail: pubId }),
+                  ),
+                80,
+              );
+            }}
+          />,
+          document.body,
+        )}
     </div>
   );
 }

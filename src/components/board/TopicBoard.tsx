@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownWideNarrow,
   CheckCircle2,
+  Columns3,
   Download,
   ExternalLink,
   Eye,
@@ -49,6 +50,10 @@ const TOPIC_COLUMNS: Array<{ id: string; labelKey: string; accent: string; rgb: 
 ];
 const ALL_IDS = TOPIC_COLUMNS.map((c) => c.id);
 const PAGE = 30; // per-fetch page size (incremental "infinite" scroll)
+// Columns rendered at once by default. The remaining topics stay one scroll
+// away (the column row scrolls horizontally instead of clipping them).
+const DEFAULT_COLUMNS = 5;
+const MIN_COLUMNS = 3;
 
 type ViewMode = "comfortable" | "compact" | "list";
 
@@ -511,6 +516,7 @@ export default function TopicBoard() {
   const [pinned, setPinned] = useState<Set<string>>(new Set());
   const [widths, setWidths] = useState<Record<string, number>>({});
   const [viewMode, setViewMode] = useState<ViewMode>("comfortable");
+  const [visibleCount, setVisibleCount] = useState(DEFAULT_COLUMNS);
   const [hydrated, setHydrated] = useState(false);
   const [dragId, setDragId] = useState<string | null>(null);
   const [focusIdx, setFocusIdx] = useState(0);
@@ -540,19 +546,29 @@ export default function TopicBoard() {
     setPinned(new Set(layout.pinned ?? []));
     setWidths((layout.widths ?? {}) as Record<string, number>);
     if (layout.viewMode) setViewMode(layout.viewMode);
+    if (layout.columns) {
+      setVisibleCount(Math.max(MIN_COLUMNS, Math.min(ALL_IDS.length, layout.columns)));
+    }
     setHydrated(true);
   }, [layout, hydrated]);
 
   const persistLayout = useCallback(
-    (next: { order?: string[]; pinned?: Set<string>; widths?: Record<string, number>; viewMode?: ViewMode }) => {
+    (next: {
+      order?: string[];
+      pinned?: Set<string>;
+      widths?: Record<string, number>;
+      viewMode?: ViewMode;
+      columns?: number;
+    }) => {
       void saveLayout({
         order: next.order ?? order,
         pinned: Array.from(next.pinned ?? pinned),
         widths: next.widths ?? widths,
         viewMode: next.viewMode ?? viewMode,
+        columns: next.columns ?? visibleCount,
       }).catch(() => {});
     },
-    [saveLayout, order, pinned, widths, viewMode],
+    [saveLayout, order, pinned, widths, viewMode, visibleCount],
   );
 
   const visibleIds = useMemo(() => {
@@ -563,9 +579,15 @@ export default function TopicBoard() {
 
   const colWidth = (id: string) => widths[id] ?? 260;
 
+  // The columns actually on screen (keyboard nav must stay inside this window).
+  const shownIds = useMemo(
+    () => visibleIds.slice(0, Math.max(MIN_COLUMNS, visibleCount)),
+    [visibleIds, visibleCount],
+  );
+
   // ── Keyboard navigation: j/k switch focused column, Enter/t/s/l act on it ──
   const focusItems = useQuery(api.articles.getTopicFeed, {
-    topic: visibleIds[focusIdx] ?? "military",
+    topic: shownIds[focusIdx] ?? "military",
     limit: 1,
   });
   useEffect(() => {
@@ -574,15 +596,15 @@ export default function TopicBoard() {
       if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) return;
       if (e.key === "j" || e.key === "ArrowRight") {
         e.preventDefault();
-        setFocusIdx((i) => Math.min(visibleIds.length - 1, i + 1));
+        setFocusIdx((i) => Math.min(shownIds.length - 1, i + 1));
       } else if (e.key === "k" || e.key === "ArrowLeft") {
         e.preventDefault();
         setFocusIdx((i) => Math.max(0, i - 1));
       } else if (e.key === "Enter" || e.key === "t") {
         const item = focusItems?.[0];
-        if (item && visibleIds[focusIdx]) {
+        if (item && shownIds[focusIdx]) {
           e.preventDefault();
-          onOpenItem(item as BoardItem, visibleIds[focusIdx]);
+          onOpenItem(item as BoardItem, shownIds[focusIdx]);
         }
       } else if (e.key === "s") {
         const item = focusItems?.[0];
@@ -598,7 +620,7 @@ export default function TopicBoard() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleIds, focusIdx, focusItems]);
+  }, [shownIds, focusIdx, focusItems]);
 
   // ── Reader tabs (open + extraction pipeline) ──
   const reextract = useAction(api.articles.reextractArticle);
@@ -809,6 +831,34 @@ export default function TopicBoard() {
               </button>
             ))}
           </div>
+          {/* Column count — how many topic columns are on screen at once */}
+          <label
+            className="flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5"
+            title={t("board.columnsHint", {
+              count: lang === "fa" ? toFaDigits(visibleCount) : visibleCount,
+              total: lang === "fa" ? toFaDigits(ALL_IDS.length) : ALL_IDS.length,
+            })}
+          >
+            <Columns3 className="size-3 text-muted-foreground" />
+            <select
+              value={visibleCount}
+              onChange={(e) => {
+                const n = Number(e.target.value);
+                setVisibleCount(n);
+                persistLayout({ columns: n });
+              }}
+              className="bg-transparent text-[10.5px] outline-none"
+            >
+              {ALL_IDS.map((_, i) => i + 1)
+                .filter((n) => n >= MIN_COLUMNS)
+                .map((n) => (
+                  <option key={n} value={n}>
+                    {lang === "fa" ? toFaDigits(n) : n}
+                  </option>
+                ))}
+            </select>
+            <span className="text-[9px] text-muted-foreground">{t("board.columns")}</span>
+          </label>
           {/* Reading lists */}
           <select
             value={activeListId ?? ""}
@@ -960,9 +1010,10 @@ export default function TopicBoard() {
         <WorldStrip />
       </div>
 
-      <div className="flex min-h-0 flex-1 gap-2.5 overflow-hidden pb-1">
-        {/* Columns — pinned first, drag to reorder */}
-        {visibleIds.map((id, idx) => {
+      <div className="flex min-h-0 flex-1 gap-2.5 overflow-x-auto overflow-y-hidden pb-1">
+        {/* Columns — pinned first, drag to reorder; only `visibleCount`
+            render at once, the rest scroll in horizontally. */}
+        {shownIds.map((id, idx) => {
           const col = TOPIC_COLUMNS.find((c) => c.id === id);
           if (!col) return null;
           return (

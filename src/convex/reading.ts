@@ -30,8 +30,9 @@ export const saveLayout = mutation({
     viewMode: v.optional(
       v.union(v.literal("comfortable"), v.literal("compact"), v.literal("list")),
     ),
+    columns: v.optional(v.number()),
   },
-  handler: async (ctx, { order, pinned, widths, viewMode }) => {
+  handler: async (ctx, { order, pinned, widths, viewMode, columns }) => {
     const name = "default";
     const now = Date.now();
     const existing = await ctx.db
@@ -40,7 +41,7 @@ export const saveLayout = mutation({
       .collect()
       .then((rows) => rows.find((r) => r.name === name));
     if (existing) {
-      await ctx.db.patch(existing._id, { order, pinned, widths, viewMode, updatedAt: now });
+      await ctx.db.patch(existing._id, { order, pinned, widths, viewMode, columns, updatedAt: now });
       return existing._id;
     }
     return await ctx.db.insert("boardLayouts", {
@@ -50,6 +51,7 @@ export const saveLayout = mutation({
       pinned,
       widths,
       viewMode,
+      columns,
       updatedAt: now,
     });
   },

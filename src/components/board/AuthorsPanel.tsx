@@ -60,12 +60,15 @@ export function AuthorsPanel({
   onClose,
   onOpenPub,
   initialSlug,
+  mode = "overlay",
 }: {
   onClose: () => void;
   /** Parent hook: switch the page to the board so the reader can mount. */
   onOpenPub?: (pubId: string) => void;
   /** Deep link: open straight on this analyst (from a reader byline). */
   initialSlug?: string;
+  /** "overlay" = floating modal · "inline" = the page's analysts tab. */
+  mode?: "overlay" | "inline";
 }) {
   const openPub = (pubId: string) => {
     if (onOpenPub) {
@@ -124,12 +127,20 @@ export function AuthorsPanel({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-background/60 p-4 backdrop-blur-sm"
-      onClick={onClose}
+      className={
+        mode === "inline"
+          ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+          : "fixed inset-0 z-50 flex items-center justify-center bg-background/60 p-4 backdrop-blur-sm"
+      }
+      onClick={mode === "inline" ? undefined : onClose}
       dir={fa ? "rtl" : "ltr"}
     >
       <div
-        className="tt-glass flex h-[86vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl"
+        className={`tt-glass tt-rise flex flex-col overflow-hidden ${
+          mode === "inline"
+            ? "min-h-0 flex-1 rounded-xl"
+            : "h-[86vh] w-full max-w-5xl rounded-2xl shadow-2xl"
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
