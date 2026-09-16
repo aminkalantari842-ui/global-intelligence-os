@@ -10,6 +10,7 @@ import TopicBoard from "@/components/board/TopicBoard";
 import { WorldStrip } from "@/components/board/BoardVisuals";
 import { Signals } from "@/components/board/Signals";
 import { SourcesManager } from "@/components/board/SourcesManager";
+import { AuthorsPanel } from "@/components/board/AuthorsPanel";
 import {
   ExternalLink,
   RefreshCw,
@@ -30,6 +31,7 @@ import {
   Activity,
   Newspaper,
   Database,
+  Users,
 } from "lucide-react";
 
 const REGION_MAP: Record<string, string> = {
@@ -279,6 +281,21 @@ export default function ThinkTanks() {
   // A1/A2 source catalog modal + B/E/H signals strip
   const [showSources, setShowSources] = useState(false);
   const [showSignals, setShowSignals] = useState(false);
+  // A4/B4 analyst & program pages + personal watchlist column
+  const [showAuthors, setShowAuthors] = useState(false);
+  const [authorSlug, setAuthorSlug] = useState<string | undefined>();
+
+  // Reader bylines dispatch "authors:open" — deep-link into the analyst page.
+  useEffect(() => {
+    const onOpenAuthor = (e: Event) => {
+      const slug = (e as CustomEvent<{ slug?: string }>).detail?.slug;
+      if (!slug) return;
+      setAuthorSlug(slug);
+      setShowAuthors(true);
+    };
+    window.addEventListener("authors:open", onOpenAuthor);
+    return () => window.removeEventListener("authors:open", onOpenAuthor);
+  }, []);
 
   const syncRegistry = useMutation(api.thinkTankSeed.syncRegistry);
 
@@ -397,6 +414,15 @@ export default function ThinkTanks() {
               className="flex items-center gap-1 rounded-lg border border-border/80 bg-card/60 px-2.5 py-1.5 text-[11px] text-muted-foreground transition-all hover:border-foreground/30 hover:text-foreground"
             >
               <Building2 className="size-3.5" /> {t("tt.sources")}
+            </button>
+            <button
+              onClick={() => {
+                setAuthorSlug(undefined);
+                setShowAuthors(true);
+              }}
+              className="flex items-center gap-1 rounded-lg border border-border/80 bg-card/60 px-2.5 py-1.5 text-[11px] text-muted-foreground transition-all hover:border-foreground/30 hover:text-foreground"
+            >
+              <Users className="size-3.5" /> {t("authors.title")}
             </button>
             <button
               onClick={() => setShowSignals((v) => !v)}
@@ -944,6 +970,30 @@ export default function ThinkTanks() {
 
       {/* A1/A2 source catalog + health manager */}
       {showSources && <SourcesManager onClose={() => setShowSources(false)} />}
+
+      {/* A4/B4 analyst pages + watchlist — opens publications on the board */}
+      {showAuthors && (
+        <AuthorsPanel
+          key={authorSlug ?? "all"}
+          initialSlug={authorSlug}
+          onClose={() => {
+            setShowAuthors(false);
+            setAuthorSlug(undefined);
+          }}
+          onOpenPub={(pubId) => {
+            setShowAuthors(false);
+            setView("board");
+            // The board mounts its listener on the next paint — dispatch after.
+            window.setTimeout(
+              () =>
+                window.dispatchEvent(
+                  new CustomEvent("board:open-pub", { detail: pubId }),
+                ),
+              80,
+            );
+          }}
+        />
+      )}
     </div>
   );
 }

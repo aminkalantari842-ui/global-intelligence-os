@@ -21,6 +21,7 @@ import {
   RefreshCw,
   StickyNote,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import { toFaDigits } from "@/components/graph/metrics";
@@ -29,13 +30,49 @@ import { AiPanel } from "./AiPanel";
 import { ArticleChat } from "./ArticleChat";
 import { ArticleGraph } from "./ArticleGraph";
 
-/** C5 key claims — deterministic sentence scoring, cached on the publication. */
+/** A4 byline + C5 key claims — both read from the same cached publication row.
+ * Author names are first-class: clicking one opens that analyst's page. */
 function KeyClaims({ pubId }: { pubId: string }) {
   const { t, lang } = useI18n();
   const pub = useQuery(api.articles.getPubClaims, { pubId: pubId as never });
-  if (!pub?.keyClaims?.length) return null;
+  if (!pub) return null;
+  const hasAuthors = (pub.authors?.length ?? 0) > 0;
+  if (!hasAuthors && !pub.keyClaims?.length) return null;
   return (
     <div className="border-b border-border px-4 py-2.5">
+      {hasAuthors && (
+        <p className="mb-1.5 flex flex-wrap items-center gap-1.5 text-[10.5px] text-muted-foreground">
+          <UserRound className="size-3 shrink-0" />
+          {pub.authors.map((a, i) => (
+            <span key={a.slug} className="flex items-center gap-1.5">
+              {i > 0 && <span className="opacity-50">·</span>}
+              <button
+                onClick={() =>
+                  window.dispatchEvent(
+                    new CustomEvent("authors:open", { detail: { slug: a.slug, name: a.name } }),
+                  )
+                }
+                className="font-medium text-foreground/80 underline-offset-4 transition-colors hover:text-foreground hover:underline"
+                title={t("authors.watch")}
+              >
+                {a.name}
+              </button>
+            </span>
+          ))}
+          <span className="opacity-50">—</span>
+          <span>{pub.thinkTankSlug}</span>
+          <span className="opacity-50">·</span>
+          <span className="tabular-nums">
+            {new Date(pub.publishedAt).toLocaleDateString(lang === "fa" ? "fa-IR" : "en-GB", {
+              day: "2-digit",
+              month: "short",
+              year: "numeric",
+            })}
+          </span>
+        </p>
+      )}
+      {pub.keyClaims?.length ? (
+      <>
       <p className="mb-1.5 text-[9px] font-semibold uppercase tracking-widest text-amber-600">{t("board.keyClaims")}</p>
       <ul className="space-y-1" dir={lang === "fa" ? "rtl" : "ltr"}>
         {pub.keyClaims.slice(0, 3).map((c, i) => (
@@ -45,6 +82,8 @@ function KeyClaims({ pubId }: { pubId: string }) {
           </li>
         ))}
       </ul>
+      </>
+      ) : null}
     </div>
   );
 }

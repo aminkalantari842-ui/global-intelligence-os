@@ -3,7 +3,13 @@
 // stat is a transparent function of stored rows, so results are reproducible
 // and auditable. Powers board badges, the Signals strip, calibration and CSV/JSON export.
 
-import { internalMutation, mutation, query } from "./_generated/server";
+import {
+  internalMutation,
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server";
 import { v } from "convex/values";
 import { contentHashOf, slugifyName } from "./lib";
 
@@ -109,64 +115,146 @@ export const enrichRecent = internalMutation({
 
 // ─── A4 Authors: build author pages from publication author strings ─────────
 
-/** Upsert author pages for the newest publications. Deterministic slugs. */
+/** Shared, bounded author-index build. Idempotent: existing rows are patched,
+ * never duplicated. Reads only the newest 400 publications. */
+async function indexAuthors(ctx: MutationCtx): Promise<{ authors: number }> {
+  const pubs = await ctx.db
+    .query("publications")
+    .withIndex("by_published")
+    .order("desc")
+    .take(400);
+  const seen = new Map<string, { name: string; tank: string; count: number; last: number }>();
+  for (const p of pubs) {
+    if (!p.author) continue;
+    // Split multi-author bylines.
+    for (const raw of p.author.split(/;|,| and | & /)) {
+      const name = raw.trim();
+      if (name.length < 4 || name.length > 80) continue;
+      const slug = slugifyName(name);
+      const cur = seen.get(slug);
+      seen.set(slug, {
+        name,
+        tank: p.thinkTankSlug,
+        count: (cur?.count ?? 0) + 1,
+        last: Math.max(cur?.last ?? 0, p.publishedAt),
+      });
+    }
+  }
+  let authors = 0;
+  for (const [slug, agg] of seen) {
+    const existing = await ctx.db
+      .query("authorPages")
+      .withIndex("by_slug", (q) => q.eq("slug", slug))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        name: agg.name,
+        pubCount: agg.count,
+        lastPubAt: agg.last,
+      });
+    } else {
+      await ctx.db.insert("authorPages", {
+        slug,
+        // Real byline spelling (not the slug) — the slug is only the key.
+        name: agg.name,
+        tankSlug: agg.tank,
+        pubCount: agg.count,
+        lastPubAt: agg.last,
+      });
+      authors++;
+    }
+  }
+  return { authors };
+}
+
+/** Upsert author pages for the newest publications (hourly cron). */
 export const buildAuthors = internalMutation({
   args: {},
-  handler: async (ctx): Promise<{ authors: number }> => {
-    const pubs = await ctx.db
-      .query("publications")
-      .withIndex("by_published")
-      .order("desc")
-      .take(400);
-    const seen = new Map<string, { tank: string; count: number; last: number }>();
-    for (const p of pubs) {
-      if (!p.author) continue;
-      // Split multi-author bylines.
-      for (const name of p.author.split(/;|,| and | & /).map((s) => s.trim())) {
-        if (name.length < 4 || name.length > 80) continue;
-        const slug = slugifyName(name);
-        const cur = seen.get(slug);
-        seen.set(slug, {
-          tank: p.thinkTankSlug,
-          count: (cur?.count ?? 0) + 1,
-          last: Math.max(cur?.last ?? 0, p.publishedAt),
-        });
-      }
-    }
-    let authors = 0;
-    for (const [slug, agg] of seen) {
-      const existing = await ctx.db
-        .query("authorPages")
-        .withIndex("by_slug", (q) => q.eq("slug", slug))
-        .unique();
-      if (existing) {
-        await ctx.db.patch(existing._id, { pubCount: agg.count, lastPubAt: agg.last });
-      } else {
-        await ctx.db.insert("authorPages", {
-          slug,
-          name: slug
-            .split("-")
-            .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-            .join(" "),
-          tankSlug: agg.tank,
-          pubCount: agg.count,
-          lastPubAt: agg.last,
-        });
-        authors++;
-      }
-    }
-    return { authors };
-  },
+  handler: async (ctx): Promise<{ authors: number }> => await indexAuthors(ctx),
 });
+
+/** A4 on-demand index build so the analyst panel is populated on first open,
+ * before the hourly cron catches up. Bounded and idempotent. */
+export const buildAuthorIndex = mutation({
+  args: {},
+  handler: async (ctx): Promise<{ authors: number }> => await indexAuthors(ctx),
+});
+
+/** A4 Program / research-track inference from the publication URL path.
+ * Deterministic and auditable: only URL structure decides, never a model. */
+export function programOf(url: string, fallback?: string | null): string {
+  try {
+    const path = new URL(url).pathname.toLowerCase();
+    const m = path.match(
+      /\/(?:programs?|projects?|initiatives?|centers?|centres?|research-areas?|topics?)\/([a-z0-9-]{3,40})/,
+    );
+    if (m) {
+      return m[1]
+        .split("-")
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ");
+    }
+  } catch {
+    // Relative or malformed URL — fall through to the topic track.
+  }
+  return fallback ?? "";
+}
+
+/** Author↔publication matcher: full byline OR distinctive last name. */
+function bylineMatches(authorField: string, authorName: string): boolean {
+  const hay = authorField.toLowerCase();
+  const full = authorName.toLowerCase().trim();
+  if (!hay || !full) return false;
+  if (hay.includes(full)) return true;
+  const last = full.split(/\s+/).slice(-1)[0] ?? "";
+  return last.length > 4 && hay.includes(last);
+}
+
+/** slug → display name for the enabled registry (analyst surfaces). */
+async function tankNames(ctx: QueryCtx): Promise<Map<string, string>> {
+  const tanks = await ctx.db
+    .query("thinkTanks")
+    .withIndex("by_enabled", (q) => q.eq("enabled", true))
+    .collect();
+  return new Map(tanks.map((t) => [t.slug, t.name]));
+}
+
+/** Watched author slugs for the shared workspace. */
+async function watchingSlugs(ctx: QueryCtx): Promise<Set<string>> {
+  const rows = await ctx.db
+    .query("authorWatchlist")
+    .withIndex("by_user", (q) => q.eq("userId", WS))
+    .collect();
+  return new Set(rows.map((r) => r.authorSlug));
+}
 
 export const listAuthors = query({
-  args: { limit: v.optional(v.number()) },
-  handler: async (ctx, { limit }) => {
+  args: { limit: v.optional(v.number()), search: v.optional(v.string()) },
+  handler: async (ctx, { limit, search }) => {
     const rows = await ctx.db.query("authorPages").collect();
-    return rows.sort((a, b) => b.pubCount - a.pubCount).slice(0, limit ?? 40);
+    const watching = await watchingSlugs(ctx);
+    const names = await tankNames(ctx);
+    let list = rows.sort((a, b) => b.pubCount - a.pubCount);
+    const needle = search?.trim().toLowerCase();
+    if (needle) {
+      list = list.filter(
+        (a) =>
+          a.name.toLowerCase().includes(needle) ||
+          a.slug.includes(needle) ||
+          a.tankSlug.includes(needle),
+      );
+    }
+    return list
+      .slice(0, limit ?? 60)
+      .map((a) => ({
+        ...a,
+        tankName: names.get(a.tankSlug) ?? a.tankSlug,
+        watching: watching.has(a.slug),
+      }));
   },
 });
 
+/** A4 Author page: first-class entity + stats, programs and publication feed. */
 export const getAuthorFeed = query({
   args: { authorSlug: v.string(), limit: v.optional(v.number()) },
   handler: async (ctx, { authorSlug, limit }) => {
@@ -174,18 +262,104 @@ export const getAuthorFeed = query({
       .query("authorPages")
       .withIndex("by_slug", (q) => q.eq("slug", authorSlug))
       .unique();
-    if (!author) return { author: null, pubs: [] };
+    if (!author) return null;
     const pubs = await ctx.db
       .query("publications")
       .withIndex("by_thinktank", (q) => q.eq("thinkTankSlug", author.tankSlug))
       .order("desc")
       .take(400);
-    const needle = author.name.toLowerCase();
+    const matched = pubs.filter((p) => bylineMatches(p.author ?? "", author.name));
+    const watching = await watchingSlugs(ctx);
+    const names = await tankNames(ctx);
+
+    const timestamps = matched.map((p) => p.publishedAt);
+    const classes = { BRIEF: 0, ANALYSIS: 0, MAJOR_REPORT: 0 };
+    const programs = new Map<string, number>();
+    for (const p of matched) {
+      if (p.lengthClass) classes[p.lengthClass] += 1;
+      const prog = programOf(p.url, p.topicFa);
+      if (prog) programs.set(prog, (programs.get(prog) ?? 0) + 1);
+    }
+
     return {
-      author,
-      pubs: pubs
-        .filter((p) => (p.author ?? "").toLowerCase().includes(needle))
-        .slice(0, limit ?? 30),
+      author: { ...author, tankName: names.get(author.tankSlug) ?? author.tankSlug },
+      watching: watching.has(authorSlug),
+      stats: {
+        count: matched.length,
+        firstPubAt: timestamps.length > 0 ? Math.min(...timestamps) : 0,
+        lastPubAt: timestamps.length > 0 ? Math.max(...timestamps) : 0,
+        classes,
+        programs: [...programs.entries()]
+          .map(([name, count]) => ({ name, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 6),
+      },
+      pubs: matched.slice(0, limit ?? 30).map((p) => ({
+        _id: p._id,
+        title: p.title,
+        url: p.url,
+        publishedAt: p.publishedAt,
+        thinkTankSlug: p.thinkTankSlug,
+        topicFa: p.topicFa,
+        lengthClass: p.lengthClass,
+        autoTags: p.autoTags,
+        program: programOf(p.url, p.topicFa),
+      })),
+    };
+  },
+});
+
+/** B4 Watchlist feed: newest pieces from followed analysts, with tank context. */
+export const getWatchlistFeed = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, { limit }) => {
+    const watch = await ctx.db
+      .query("authorWatchlist")
+      .withIndex("by_user", (q) => q.eq("userId", WS))
+      .collect();
+    if (watch.length === 0) return { authors: [], items: [] };
+
+    const slugs = new Set(watch.map((w) => w.authorSlug));
+    const authors = (await ctx.db.query("authorPages").collect()).filter((a) => slugs.has(a.slug));
+    const names = await tankNames(ctx);
+    const cutoff = dbNow() - 120 * DAY;
+    const pubs = await ctx.db
+      .query("publications")
+      .withIndex("by_published", (q) => q.gte("publishedAt", cutoff))
+      .order("desc")
+      .take(800);
+
+    const items = pubs.flatMap((p) => {
+      const hit = authors.find(
+        (a) => a.tankSlug === p.thinkTankSlug && bylineMatches(p.author ?? "", a.name),
+      );
+      if (!hit) return [];
+      return [
+        {
+          _id: p._id,
+          title: p.title,
+          url: p.url,
+          publishedAt: p.publishedAt,
+          thinkTankSlug: p.thinkTankSlug,
+          topicFa: p.topicFa,
+          lengthClass: p.lengthClass,
+          authorSlug: hit.slug,
+          authorName: hit.name,
+        },
+      ];
+    });
+
+    return {
+      authors: authors
+        .map((a) => ({
+          slug: a.slug,
+          name: a.name,
+          tankSlug: a.tankSlug,
+          tankName: names.get(a.tankSlug) ?? a.tankSlug,
+          pubCount: a.pubCount,
+        }))
+        .sort((a, b) => b.pubCount - a.pubCount),
+      items: items.slice(0, limit ?? 30),
     };
   },
 });

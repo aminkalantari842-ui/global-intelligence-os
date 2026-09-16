@@ -76,6 +76,21 @@ crons.interval(
   (contentAlertsRef as { evaluateContentRules: any }).evaluateContentRules,
 );
 
+// A4: author & program pages (first-class analyst entities) from stored
+// bylines. Hourly, right after enrichment, so the analyst panel stays fresh.
+crons.hourly(
+  "Build author index",
+  { minuteUTC: 35 },
+  (enrichRef as { buildAuthors: any }).buildAuthors,
+);
+
+// K4: nightly citation harvesting from stored full texts (bounded per run).
+crons.daily(
+  "Harvest article citations",
+  { hourUTC: 3, minuteUTC: 20 },
+  (enrichRef as { harvestRefs: any }).harvestRefs,
+);
+
 // A6: nightly cross-post detection over the last 30 days (bounded per run).
 crons.daily(
   "Scan duplicate publications",

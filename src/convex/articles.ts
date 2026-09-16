@@ -16,6 +16,7 @@ import { internalAction, internalMutation, internalQuery, action } from "./_gene
 import { internal } from "./_generated/api";
 import { v } from "convex/values";
 import { AI_CHAT_URL, AI_MODEL, aiApiKey } from "./aiConfig";
+import { slugifyName } from "./lib";
 
 const AI_URL = AI_CHAT_URL;
 const MODEL = AI_MODEL;
@@ -827,6 +828,19 @@ export const getPubClaims = query({
   handler: async (ctx, { pubId }) => {
     const pub = await ctx.db.get(pubId);
     if (!pub) return null;
-    return { keyClaims: pub.keyClaims ?? [], autoTags: pub.autoTags ?? [] };
+    // A4: byline split into linkable author refs (slug matches authorPages keys).
+    const authors = (pub.author ?? "")
+      .split(/;|,| and | & /)
+      .map((s) => s.trim())
+      .filter((n) => n.length >= 4 && n.length <= 80)
+      .map((name) => ({ name, slug: slugifyName(name) }));
+    return {
+      keyClaims: pub.keyClaims ?? [],
+      autoTags: pub.autoTags ?? [],
+      thinkTankSlug: pub.thinkTankSlug,
+      topicFa: pub.topicFa ?? null,
+      publishedAt: pub.publishedAt,
+      authors,
+    };
   },
 });
