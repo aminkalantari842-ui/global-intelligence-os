@@ -1,0 +1,90 @@
+# Self-hosted Convex stack for Global Intelligence OS.
+#
+# This is the official Convex self-hosted backend + dashboard (ghcr.io/get-convex/*)
+# configured for this project: public https origins, long-running AI actions, and
+# a healthcheck-gated dashboard.
+#
+#   Runbook:   deploy/selfhost/README.md
+#   Start:     docker compose --env-file stack.env up -d
+#   Logs:      docker compose --env-file stack.env logs -f backend
+#   Admin key: docker compose --env-file stack.env exec backend ./generate_admin_key.sh
+#
+# Ports are bound to the loopback interface on purpose: the reverse proxy (Caddy)
+# is the only public door, and it terminates TLS for the browser.
+
+services:
+  backend:
+    image: ghcr.io/get-convex/convex-backend:${CONVEX_REV:-latest}
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "127.0.0.1:${PORT:-3210}:3210"          # Convex API (websocket sync)
+      - "127.0.0.1:${SITE_PROXY_PORT:-3211}:3211" # HTTP actions
+    volumes:
+      - convex-data:/convex/data
+    environment:
+      - INSTANCE_NAME=${INSTANCE_NAME:-global-intelligence-os}
+      # Required. Rotate before the first boot: openssl rand -hex 32
+      - INSTANCE_SECRET=${INSTANCE_SECRET:?set INSTANCE_SECRET in stack.env}
+      # Required. Public https origins the browser actually uses — not localhost.
+      - CONVEX_CLOUD_ORIGIN=${CONVEX_CLOUD_ORIGIN:?set CONVEX_CLOUD_ORIGIN in stack.env}
+      - CONVEX_SITE_ORIGIN=${CONVEX_SITE_ORIGIN:?set CONVEX_SITE_ORIGIN in stack.env}
+      # Anonymous telemetry off.
+      - DISABLE_BEACON=${DISABLE_BEACON:-true}
+      # Prometheus-compatible /metrics on :3210 — useful for the per-source and
+      # publishing-velocity monitors.
+      - DISABLE_METRICS_ENDPOINT=${DISABLE_METRICS_ENDPOINT:-false}
+      # Keep internal error detail out of client-visible messages.
+      - REDACT_LOGS_TO_CLIENT=${REDACT_LOGS_TO_CLIENT:-true}
+      - RUST_LOG=${RUST_LOG:-info}
+      # Concurrency and timeouts. Raise the two timeout knobs if a long AI action
+      # (full-text translation, weekly trend narrative) gets cut off.
+      - APPLICATION_MAX_CONCURRENT_QUERIES=${APPLICATION_MAX_CONCURRENT_QUERIES:-16}
+      - APPLICATION_MAX_CONCURRENT_MUTATIONS=${APPLICATION_MAX_CONCURRENT_MUTATIONS:-16}
+      - APPLICATION_MAX_CONCURRENT_V8_ACTIONS=${APPLICATION_MAX_CONCURRENT_V8_ACTIONS:-16}
+      - APPLICATION_MAX_CONCURRENT_NODE_ACTIONS=${APPLICATION_MAX_CONCURRENT_NODE_ACTIONS:-16}
+      - V8_ACTION_USER_TIMEOUT_SECS
+      - NODE_ACTION_USER_TIMEOUT_SECS
+      # Optional: run state on Postgres/MySQL instead of the bundled SQLite volume.
+      - DATABASE_URL
+      - POSTGRES_URL
+      - MYSQL_URL
+      # Optional: S3 for exports, snapshots, files and search indexes.
+      - S3_ENDPOINT_URL
+      - S3_STORAGE_EXPORTS_BUCKET
+      - S3_STORAGE_SNAPSHOT_IMPORTS_BUCKET
+      - S3_STORAGE_FILES_BUCKET
+      - S3_STORAGE_MODULES_BUCKET
+      - S3_STORAGE_SEARCH_BUCKET
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+      - AWS_REGION
+      - AWS_S3_FORCE_PATH_STYLE
+      - AWS_S3_DISABLE_CHECKSUMS
+      - AWS_S3_DISABLE_SSE
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3210/version || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  dashboard:
+    image: ghcr.io/get-convex/convex-dashboard:${CONVEX_REV:-latest}
+    restart: unless-stopped
+    stop_grace_period: 10s
+    stop_signal: SIGINT
+    ports:
+      - "127.0.0.1:${DASHBOARD_PORT:-6791}:6791"
+    environment:
+      # The API origin, as reached from the dashboard in the browser.
+      - NEXT_PUBLIC_DEPLOYMENT_URL=${NEXT_PUBLIC_DEPLOYMENT_URL:?set NEXT_PUBLIC_DEPLOYMENT_URL in stack.env}
+      - NEXT_PUBLIC_LOAD_MONACO_INTERNALLY
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  convex-data:

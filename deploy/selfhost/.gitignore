@@ -1,0 +1,4 @@
+# Server-side secrets and off-box backups.
+stack.env
+convex-backup/
+*.zip

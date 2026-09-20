@@ -1,0 +1,32 @@
+# TLS + routing for the self-hosted Convex stack.
+#
+# Caddy obtains and renews certificates automatically, so the three hostnames
+# below only need A/AAAA records pointing at this server.
+#
+# Replace api.example.com / site.example.com / dash.example.com with your real
+# domains — they must match CONVEX_CLOUD_ORIGIN, CONVEX_SITE_ORIGIN and the
+# dashboard URL in stack.env, or the browser will fail on mixed content/CORS.
+
+api.example.com {
+	encode zstd gzip
+	# Convex sync runs over WebSockets; disabling buffering keeps realtime
+	# updates immediate for the board, ticker and alerts.
+	reverse_proxy 127.0.0.1:3210 {
+		flush_interval -1
+	}
+}
+
+site.example.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3211
+}
+
+dash.example.com {
+	encode zstd gzip
+	# The dashboard prompts for the admin key itself. If you would rather keep it
+	# off the public internet, either firewall it or add HTTP basic auth:
+	#   basic_auth {
+	#       admin $2a$14$REPLACE_WITH_A_BCRYPT_HASH
+	#   }
+	reverse_proxy 127.0.0.1:6791
+}
