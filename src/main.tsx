@@ -8,6 +8,7 @@ import { createRoot } from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router";
 import { I18nProvider } from "@/i18n/context";
 import { LangToggle } from "@/components/LangToggle";
+import { BackendErrorBoundary } from "@/components/BackendGate";
 import "./index.css";
 
 const Landing = lazy(() => import("./pages/Landing.tsx"));
@@ -60,6 +61,29 @@ class RootErrorBoundary extends React.Component<
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 
+/**
+ * Routes wrapped in the data-layer boundary, keyed by path so a failure on one
+ * page clears itself when the user navigates elsewhere.
+ */
+function RoutedApp() {
+  const location = useLocation();
+  return (
+    <BackendErrorBoundary resetKey={`${location.pathname}${location.search}`}>
+      <Suspense fallback={<RouteLoading />}>
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          {/* Auth removed: legacy /auth URLs go straight to the console */}
+          <Route path="/auth" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/thinktanks" element={<ThinkTanks />} />
+          <Route path="/analyst" element={<Analyst />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </Suspense>
+    </BackendErrorBoundary>
+  );
+}
+
 function RouteSyncer() {
   const location = useLocation();
   useEffect(() => {
@@ -92,17 +116,7 @@ createRoot(document.getElementById("root")!).render(
             <div className="fixed bottom-4 left-4 z-50">
               <LangToggle />
             </div>
-            <Suspense fallback={<RouteLoading />}>
-              <Routes>
-                <Route path="/" element={<Landing />} />
-                {/* Auth removed: legacy /auth URLs go straight to the console */}
-                <Route path="/auth" element={<Navigate to="/dashboard" replace />} />
-                <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/thinktanks" element={<ThinkTanks />} />
-                <Route path="/analyst" element={<Analyst />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Suspense>
+            <RoutedApp />
           </BrowserRouter>
         </I18nProvider>
       </ConvexProvider>

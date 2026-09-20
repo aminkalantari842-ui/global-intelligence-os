@@ -30,27 +30,28 @@ crons.daily(
 );
 
 // Warm the FA translation cache for the newest publications. Bounded batch
-// (20 items/run); every 2 hours keeps pace with the RSS refresh.
+// (20 items/run); every 6 hours keeps pace with the RSS refresh while keeping
+// scheduled writes off the hot `publications` table more of the time.
 crons.interval(
   "Backfill FA translations",
-  { hours: 2 },
+  { hours: 6 },
   backfillRef,
 );
 
-// Hourly: classify recent items into topic columns + extract & translate the
-// newest full articles so the Persian board is ready before users open it.
-crons.hourly(
+// Every 3 hours: classify recent items into topic columns + extract & translate
+// the newest full articles so the Persian board is ready before users open it.
+crons.interval(
   "Auto-translate newest articles",
-  { minuteUTC: 15 },
+  { hours: 3 },
   articlesRef,
-  { limit: 6 },
+  { limit: 4 },
 );
 
 // Alert engine: rule-based evaluation over the stored graph, deduped per
 // 12h window. Also refreshes daily actor snapshots for trend analysis.
 crons.interval(
   "Evaluate alert rules",
-  { hours: 4 },
+  { hours: 8 },
   (alertsRef as { evaluate: any }).evaluate,
 );
 
@@ -61,10 +62,11 @@ crons.daily(
 );
 
 // Enrichment: auto-tags, key claims, content hashes, author pages (idempotent,
-// newest-first). Runs hourly so the board badges stay fresh.
+// newest-first). Every 6 hours keeps board badges fresh without rewriting the
+// hot tables (and re-shipping every open board) every hour.
 crons.interval(
   "Enrich recent publications",
-  { hours: 1 },
+  { hours: 6 },
   (enrichRef as { enrichRecent: any }).enrichRecent,
 );
 
@@ -72,15 +74,15 @@ crons.interval(
 // deduped per rule+article pair.
 crons.interval(
   "Evaluate content alert rules",
-  { hours: 2 },
+  { hours: 8 },
   (contentAlertsRef as { evaluateContentRules: any }).evaluateContentRules,
 );
 
 // A4: author & program pages (first-class analyst entities) from stored
-// bylines. Hourly, right after enrichment, so the analyst panel stays fresh.
-crons.hourly(
+// bylines. Every 6 hours, offset from enrichment, keeps the panel fresh.
+crons.interval(
   "Build author index",
-  { minuteUTC: 35 },
+  { hours: 6 },
   (enrichRef as { buildAuthors: any }).buildAuthors,
 );
 
@@ -100,9 +102,9 @@ crons.daily(
 
 // E4: refresh the leading/lagging calibration cache (bounded precompute; the
 // reactive query only reads the snapshot).
-crons.interval(
+crons.daily(
   "Rebuild calibration cache",
-  { hours: 6 },
+  { hourUTC: 0, minuteUTC: 50 },
   (enrichRef as { rebuildCalibration: any }).rebuildCalibration,
 );
 
