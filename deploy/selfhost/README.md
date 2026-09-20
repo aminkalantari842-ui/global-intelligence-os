@@ -16,7 +16,7 @@
 
 ```bash
 # نمونه آماده‌سازی روی Ubuntu
-sudo apt update && sudo apt install -y docker.io docker-compose-v2 curl
+sudo apt update && sudo apt install -y docker.io docker-compose-v2 curl unzip
 sudo usermod -aG docker "$USER"   # سپس یک‌بار logout/login
 sudo ufw allow 80,443/tcp && sudo ufw enable
 ```
@@ -108,31 +108,50 @@ bunx convex env set AI_MODEL 'deepseek-v4.1'
 
 ## ۵) انتقال داده از ابر
 
+یک نکتهٔ عملی که در همین پروژه آزموده شد: **snapshot export حتی وقتی اجرای توابع با محدودیت پلن مسدود است هم کار می‌کند**، چون از سمت بک‌اند داشبورد سرو می‌شود. export فقط وقتی شکست می‌خورد که دیپلوی pause یا حذف شده باشد.
+
 ```bash
 export CONVEX_DEPLOY_KEY='prod:...'        # داشبورد Convex → Project Settings → Deploy Keys
-./migrate-data.sh export                   # ابر → ./convex-backup/*.zip
+./migrate-data.sh export ./convex-backup   # ابر → ./convex-backup/cloud-snapshot-<تاریخ>.zip
+
+# عددهای «قبل» را آفلاین از خود فایل بگیر (به دیپلوی زنده نیاز ندارد)
+./migrate-data.sh inventory ./convex-backup/cloud-snapshot-<تاریخ>.zip
 
 export CONVEX_SELF_HOSTED_URL='https://api.example.com'
 export CONVEX_SELF_HOSTED_ADMIN_KEY='<admin key>'
-./migrate-data.sh import                   # zip → سرور خودت
+FORCE=1 ./migrate-data.sh import ./convex-backup/cloud-snapshot-<تاریخ>.zip
 ./migrate-data.sh verify
 ```
 
 `_id` و `_creationTime` اسناد حفظ می‌شوند، پس ارجاع‌های بین جدول‌ها (بازیگران، منشن‌ها، ارجاعات مقالات) سالم منتقل می‌شوند.
 
-### شمارش برای اطمینان از انتقال کامل
+دو محافظ عمدی در اسکریپت:
 
-قبل از مهاجرت یک عکس فوری از ابر بگیر و بعد از مهاجرت مقایسه کن:
+- **`FORCE=1`** لازم است، چون import با `--replace` کار می‌کند و دادهٔ جدول‌های موجود در snapshot را روی هدف بازنویسی می‌کند. تا وقتی نام سرور را در همان پیام تأیید نکنی، جلو نمی‌رود.
+- همهٔ حالت‌های سمت self-hosted اول **`CONVEX_DEPLOY_KEY` را unset می‌کنند**، چون آن متغیر در CLI بر همه‌چیز مقدم است و در غیر این صورت ممکن است import به‌جای سرور تو روی دیپلوی ابری بنشیند.
+
+اگر import روی جدول‌های به‌جاماندهٔ `auth*` (باقی‌ماندهٔ ماژول احراز هویتی که از این پروژه حذف شده) گیر کرد، همان snapshot را جدول‌به‌جدول بریز:
 
 ```bash
-export CONVEX_DEPLOY_KEY='prod:...'
-./migrate-data.sh counts --prod > /tmp/before.txt   # ابر
-./migrate-data.sh verify        > /tmp/after.txt    # سرور خودت
+FORCE=1 ./migrate-data.sh import-tables ./convex-backup/cloud-snapshot-<تاریخ>.zip
 ```
 
-`counts` تعداد ردیف‌های جدول‌های حیاتی (`thinkTanks`، `publications`، `articleContent`، `relationEvents`، `actors`، `actorMentions`، `authorPages`، `translations`) را با یک کوئری فقط‌خواندنی چاپ می‌کند. عددها باید یکی باشند؛ اختلاف یعنی آن جدول در زیپ نبوده یا import نصفه مانده.
+این حالت فقط جدول‌های واقعی برنامه را می‌ریزد و auth-* را نادیده می‌گیرد.
 
-**نکتهٔ مهم:** export فقط وقتی کار می‌کند که دیپلوی ابری «زنده» باشد. اگر پلن مسدود/غیرفعال است، ابتدا موقتاً پلن را فعال کن و بلافاصله export بگیر، بعد به سرور خودت منتقل کن. اگر این ممکن نیست، مسیر بازسازی هست:
+### مقایسهٔ عددها
+
+`counts` یک کوئری زنده می‌زند، پس اگر دیپلوی ابری مسدود باشد کار نمی‌کند؛ به‌جایش عددهای «قبل» را از خود فایل snapshot بگیر:
+
+```bash
+./migrate-data.sh inventory ./convex-backup/cloud-snapshot-<تاریخ>.zip   # قبل (آفلاین، بدون شبکه)
+./migrate-data.sh verify                                                 # بعد (روی سرور خودت)
+```
+
+`inventory` جدول‌به‌جدول از داخل زیپ می‌شمارد و `verify` همان نُه جدول حیاتی (`thinkTanks`، `publications`، `articleContent`، `relationEvents`، `actors`، `actorMentions`، `authorPages`، `translations`، `appSettings`) را روی بک‌اند زنده می‌شمارد. عددها باید بخوانند؛ اختلاف یعنی آن جدول در snapshot نبوده یا import نصفه مانده.
+
+### اگر ابر در دسترس نبود
+
+مسیر بازسازی از کد:
 
 ```bash
 ./migrate-data.sh reseed
@@ -180,7 +199,7 @@ docker run --rm -v selfhost_convex-data:/data -v /var/backups:/backup alpine \
   tar czf /backup/convex-data-$(date +%F).tgz -C /data .
 ```
 
-بازگردانی: `./migrate-data.sh import <backupDir>` یا `docker compose --env-file stack.env down && tar xzf ... && up -d`.
+بازگردانی: `FORCE=1 ./migrate-data.sh import <backupDir>` یا `docker compose --env-file stack.env down && tar xzf ... && up -d`.
 
 ## ۸) به‌روزرسانی و نگهداری
 
@@ -210,6 +229,7 @@ docker compose --env-file stack.env up -d
 | مرورگر خطای mixed content / blocked | `VITE_CONVEX_URL` روی `http://` است | همیشه `https://` |
 | صفحهٔ سفید روی `app.example.com` | باندل با URL دیگری بیلد شده | `deploy-web.sh` را دوباره اجرا کن؛ مرحلهٔ verify همان را چک می‌کند |
 | ۴۰۴ روی refresh مسیرهای داخلی | فرانت با `file_server` ساده سرو می‌شود | بلوک `try_files {path} /index.html` را نگه دار |
+| import روی جدول‌های `auth*` خطا می‌دهد | باقی‌ماندهٔ ماژول احراز هویت حذف‌شده در ابر | `import-tables` را بزن |
 | CORS یا «origin not allowed» | `CONVEX_CLOUD_ORIGIN` با دامنهٔ واقعی یکی نیست | `stack.env` را اصلاح و `up -d` کن |
 | داشبورد بالا نمی‌آید یا ۵۰۳ | `NEXT_PUBLIC_DEPLOYMENT_URL` نادرست | همان `CONVEX_CLOUD_ORIGIN` را بگذار |
 | `401`/`admin key rejected` | کلید جابه‌جا یا کهنه است | `generate_admin_key.sh` را دوباره اجرا کن |
@@ -223,7 +243,7 @@ docker compose --env-file stack.env up -d
 - [ ] `https://api.example.com/version` پاسخ می‌دهد
 - [ ] `bunx convex dev --once` بدون خطا توابع را push می‌کند
 - [ ] کلیدهای AI با `convex env set` ست شده‌اند
-- [ ] داده منتقل شده یا `reseed` اجرا شده
-- [ ] `./migrate-data.sh counts --prod` و `./migrate-data.sh verify` عددهای یکسان می‌دهند
+- [ ] snapshot ابری گرفته و با `import` یا `import-tables` منتقل شده
+- [ ] `inventory` و `verify` عددهای یکسان می‌دهند
 - [ ] `https://app.example.com` باز می‌شود و refresh روی `/dashboard` هم ۴۰۴ نمی‌دهد
 - [ ] پشتیبان شبانه و اسنپ‌شات ولوم فعال است
