@@ -5,7 +5,8 @@
 # Usage
 #   ./migrate-data.sh export [backupDir]   # Convex Cloud  -> ./convex-backup/*.zip
 #   ./migrate-data.sh import [backupDir]   # ./convex-backup -> self-hosted
-#   ./migrate-data.sh verify               # health-check the self-hosted backend
+#   ./migrate-data.sh verify               # health-check + row counts (self-hosted)
+#   ./migrate-data.sh counts [--prod]      # row counts (cloud with --prod, else self-hosted)
 #   ./migrate-data.sh reseed               # rebuild the corpus from code + RSS
 #
 # Environment
@@ -23,6 +24,23 @@ CONVEX_BIN="${CONVEX_BIN:-npx --yes convex}"
 
 say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 fail() { printf '\033[31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
+
+# Row counts for the tables that must survive the move. Run it on the cloud
+# deployment before migrating and on the self-hosted one after, then compare.
+COUNTS_QUERY='
+const out = {
+  thinkTanks: (await ctx.db.query("thinkTanks").collect()).length,
+  publications: (await ctx.db.query("publications").collect()).length,
+  articleContent: (await ctx.db.query("articleContent").collect()).length,
+  relationEvents: (await ctx.db.query("relationEvents").collect()).length,
+  actors: (await ctx.db.query("actors").collect()).length,
+  actorMentions: (await ctx.db.query("actorMentions").collect()).length,
+  authorPages: (await ctx.db.query("authorPages").collect()).length,
+  translations: (await ctx.db.query("translations").collect()).length,
+  appSettings: (await ctx.db.query("appSettings").collect()).length,
+};
+return out;
+'
 
 require_self_hosted() {
   [[ -n "${CONVEX_SELF_HOSTED_URL:-}" ]] || fail "CONVEX_SELF_HOSTED_URL is not set (e.g. https://api.example.com)"
@@ -72,10 +90,26 @@ EOF
     say "Backend version"
     curl -fsS "${CONVEX_SELF_HOSTED_URL%/}/version" || fail "Backend is not reachable at $CONVEX_SELF_HOSTED_URL"
     printf '\n'
-    say "Think-tank registry"
+    say "Row counts on the self-hosted deployment"
+    $CONVEX_BIN run --inline-query "$COUNTS_QUERY"
+    say "Think-tank registry sample"
     $CONVEX_BIN data thinkTanks --limit 3
-    say "Newest publications"
+    say "Newest publications sample"
     $CONVEX_BIN data publications --limit 3
+    ;;
+
+  counts)
+    # Compare cloud vs self-hosted: run with --prod before the move, without it after.
+    if [[ "${2:-}" == "--prod" ]]; then
+      unset CONVEX_SELF_HOSTED_URL CONVEX_SELF_HOSTED_ADMIN_KEY
+      [[ -n "${CONVEX_DEPLOY_KEY:-}" ]] || fail "CONVEX_DEPLOY_KEY is not set (needed to read the cloud deployment)"
+      say "Row counts on the cloud deployment"
+      $CONVEX_BIN run --inline-query "$COUNTS_QUERY" --prod
+    else
+      require_self_hosted
+      say "Row counts on $CONVEX_SELF_HOSTED_URL"
+      $CONVEX_BIN run --inline-query "$COUNTS_QUERY"
+    fi
     ;;
 
   reseed)
@@ -94,7 +128,7 @@ EOF
     ;;
 
   *)
-    sed -n '2,16p' "$0"
+    sed -n '2,17p' "$0"
     exit 1
     ;;
 esac

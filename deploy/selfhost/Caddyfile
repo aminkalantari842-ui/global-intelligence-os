@@ -1,11 +1,13 @@
 # TLS + routing for the self-hosted Convex stack.
 #
-# Caddy obtains and renews certificates automatically, so the three hostnames
-# below only need A/AAAA records pointing at this server.
+# Caddy obtains and renews certificates automatically, so the four hostnames
+# below only need A/AAAA records pointing at this server. If you serve the app
+# somewhere else (Vercel, Netlify, another host), delete the app.example.com
+# block and keep the three backend ones.
 #
-# Replace api.example.com / site.example.com / dash.example.com with your real
-# domains — they must match CONVEX_CLOUD_ORIGIN, CONVEX_SITE_ORIGIN and the
-# dashboard URL in stack.env, or the browser will fail on mixed content/CORS.
+# Replace api.example.com / site.example.com / dash.example.com / app.example.com
+# with your real domains — the first two must match CONVEX_CLOUD_ORIGIN and
+# CONVEX_SITE_ORIGIN in stack.env, or the browser will fail on CORS/mixed content.
 
 api.example.com {
 	encode zstd gzip
@@ -19,6 +21,19 @@ api.example.com {
 site.example.com {
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:3211
+}
+
+app.example.com {
+	root * /srv/global-intelligence-os
+	encode zstd gzip
+	# Vite SPA: a refresh or a direct visit to /dashboard, /thinktanks or
+	# /analyst must fall back to index.html, otherwise the server answers 404.
+	try_files {path} /index.html
+	file_server
+	# Hashed bundles are immutable; the HTML shell must never be cached.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+	header /index.html Cache-Control "no-cache"
 }
 
 dash.example.com {
